@@ -1,0 +1,27 @@
+name: llm_scraper
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - python-dotenv
+      - httpx
+      - playwright
+      - beautifulsoup4
+      - lxml
+      - boilerpy3
+      - trafilatura
+      - tqdm
+      - loguru
+      - pandas
+      - langchain
+      - langchain_groq
+      - langchain_ollama
+      - fastapi
+      - uvicorn
+      - gradio
+      - streamlit
+      - typer
+      - rich

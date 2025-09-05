@@ -1,0 +1,36 @@
+# Core language
+python-dotenv
+
+# Async HTTP requests
+httpx
+
+# Browser automation (JS-rendered pages)
+playwright
+
+# HTML parsing
+beautifulsoup4
+lxml
+
+# Content cleaning
+boilerpy3
+trafilatura
+
+# Logging & progress
+tqdm
+loguru
+
+# Data handling & export
+pandas
+
+# LLM integrations (only Groq + Ollama with LangChain)
+langchain
+langchain_groq
+langchain_ollama
+
+# Web & API interfaces (optional, for later stages)
+fastapi
+uvicorn
+gradio
+streamlit
+typer
+rich
