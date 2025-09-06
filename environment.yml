@@ -25,3 +25,4 @@ dependencies:
       - streamlit
       - typer
       - rich
+      - langgraph
