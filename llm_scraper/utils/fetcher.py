@@ -38,7 +38,7 @@ async def fetch_html_playwright(url: str, wait: int = 3000) -> str:
             await browser.close()
             return html
     except Exception as e:
-        logger.error(f"Playwright fetch failed for {url}: {repr(e)}")
+        logger.error(f"Playwright fetch failed for {url}: {repr(e)}") # repr() more complete: it shows the error type + message.
         logger.error(traceback.format_exc())
         return ""
     
