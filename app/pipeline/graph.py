@@ -2,22 +2,11 @@
 import asyncio
 from loguru import logger
 from langgraph.graph import StateGraph, END
-from llm_scraper.utils.cleaner import extract_main_content, chunk_html
-from llm_scraper.utils.fetcher import fetch_html_playwright
-from llm_scraper.utils.llm_engine import get_llm, build_prompt
-from llm_scraper.utils.parser import validation_and_parse_response
-from typing import Dict, Any, TypedDict, List, Optional
-
-
-class ScraperState(TypedDict):
-    url: str
-    instruction: str
-    html: Optional[str]
-    text: Optional[str]
-    chunks: Optional[List[str]]
-    prompt: Optional[str]
-    llm_response: Optional[str]
-    parsed_data: Optional[Dict[str, Any]]
+from app.services.cleaner import extract_main_content, chunk_html
+from app.services.fetcher import fetch_html_playwright
+from app.services.llm_engine import get_llm, build_prompt
+from app.services.parser import validation_and_parse_response
+from app.models.state import ScraperState
 
 
 def fetch_node(state: ScraperState) -> ScraperState:

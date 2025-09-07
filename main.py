@@ -1,6 +1,7 @@
 # main.py
 import typer
-from llm_scraper.pipeline.graph import build_scraper_graph
+from app.pipeline.graph import build_scraper_graph
+from app.services.exporter import save_to_json, save_to_csv
 
 app = typer.Typer()
 
@@ -23,7 +24,9 @@ def run(
 
     # Print parsed result
     print("===== FINAL RESULT =====")
-    print(result.get("parsed_data"))
+    text = result.get("parsed_data")
+    save_to_csv(text)
+    save_to_json(text)
 
 if __name__ == "__main__":
     app()

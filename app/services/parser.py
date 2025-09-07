@@ -2,11 +2,11 @@
 
 import json
 import re
-from loguru import logger
-from pydantic import BaseModel, ValidationError
 
-class ExtractionResult(BaseModel):
-    data: list
+from loguru import logger
+from pydantic import ValidationError
+from app.models.extraction import ExtractionResult
+
 
 def clean_json_text(text: str) -> str:
     """Remove markdown fences like ```json ... ``` if present."""

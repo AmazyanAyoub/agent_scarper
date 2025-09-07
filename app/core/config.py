@@ -18,3 +18,5 @@ DEFAULT_PROVIDER = "groq"
 # Debug check
 if not GROQ_API_KEY:
     logger.warning("⚠️ GROQ_API_KEY not found in .env")
+
+OUTPUT_DIR = "outputs"

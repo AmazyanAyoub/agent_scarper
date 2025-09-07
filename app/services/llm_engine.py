@@ -4,7 +4,7 @@ from loguru import logger
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
-from llm_scraper.config import GROQ_API_KEY, DEFAULT_MODEL, DEFAULT_PROVIDER
+from app.core.config import GROQ_API_KEY, DEFAULT_MODEL, DEFAULT_PROVIDER
 
 
 def get_llm(provider: str = DEFAULT_PROVIDER, model: str = DEFAULT_MODEL):
