@@ -26,3 +26,5 @@ dependencies:
       - typer
       - rich
       - langgraph
+      - sentence-transformers
+      - hf_xet

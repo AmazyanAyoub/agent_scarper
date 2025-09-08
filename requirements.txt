@@ -17,3 +17,5 @@ gradio
 streamlit
 typer
 rich
+sentence-transformers
+hf_xet
