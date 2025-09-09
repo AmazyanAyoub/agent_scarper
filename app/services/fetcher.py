@@ -4,6 +4,7 @@ import httpx
 from playwright.async_api import async_playwright
 from loguru import logger
 import traceback
+from bs4 import BeautifulSoup
 
 def fetch_with_httpx(url: str, timeout: int = 10) -> str:
     """
@@ -21,10 +22,10 @@ def fetch_with_httpx(url: str, timeout: int = 10) -> str:
         return ""
 
 
-async def fetch_html_playwright(url: str, wait: int = 3000) -> str:
+async def fetch_html_links(url: str, wait: int = 3000):
     """
-    Fetch renderd HTML using playwright.
-    Best for heavy JS pages.
+    Extract html and all links from a page using Playwright (dynamic HTML).
+    Returns list of dicts: {"url": ..., "text": ...}
     """
 
     try:
@@ -36,11 +37,21 @@ async def fetch_html_playwright(url: str, wait: int = 3000) -> str:
             await page.wait_for_timeout(wait)  # wait for JS to load
             html = await  page.content()
             await browser.close()
-            return html
+            
+            soup = BeautifulSoup(html, "html.parser")
+            links = []
+            for p in soup.find_all("a", href=True):
+                link_url = p["href"]
+                link_text = p.get_text(strip=True)
+                if link_url.startswith("/"):
+                    link_url = url.rstrip("/") + link_url
+                links.append({"url": link_url, "text": link_text})
+
+            return html, links
     except Exception as e:
         logger.error(f"Playwright fetch failed for {url}: {repr(e)}") # repr() more complete: it shows the error type + message.
         logger.error(traceback.format_exc())
-        return ""
+        return "", []
     
 # if __name__ == "__main__":
 #     import asyncio

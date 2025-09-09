@@ -1,43 +1,33 @@
 # exporter.py
 
 import json 
-import os
-import pandas as pd
-
+import csv
 from loguru import logger
-from app.core.config import OUTPUT_DIR
+from pathlib import Path
+from typing import List, Dict
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+def export_results(ranked_links: List[Dict], output_dir: str = "outputs", formats: List[str] = ["json", "csv"]) -> None:
+    """
+    Export ranked results to JSON and/or CSV.
+    Each entry = {"url": ..., "text": ..., "score": ...}
+    """
 
-def save_to_json(data: str, filename: str = "result.json"):
-    """
-    Save data to a JSON file inside outputs/.
-    """
-    try:
-        path = os.path.join(OUTPUT_DIR, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"✅ Results saved to {path}")
-    except Exception as e:
-        logger.error(f"❌ Failed to save JSON: {e}")
-        return ""
-    
-def save_to_csv(data: dict, filename: str = "result.csv") -> str:
-    """
-    Save data to a CSV file inside outputs/.
-    Expects data like {"data": [ {...}, {...} ]}
-    """
-    path = os.path.join(OUTPUT_DIR, filename)
-    try:
-        if "data" in data and isinstance(data["data"], list):
-            df = pd.DataFrame(data["data"])
-            df.to_csv(path, index=False, encoding="utf-8")
-            logger.info(f"✅ Results saved to {path}")
-            return path
-        else:
-            logger.warning("⚠️ No 'data' key found in result, skipping CSV export.")
-            return ""
-    except Exception as e:
-        logger.error(f"❌ Failed to save CSV: {e}")
-        return ""
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    if "json" in formats:
+        json_path = Path(output_dir) / "ranked_results.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(ranked_links, f, ensure_ascii=False, indent=2)
+        logger.success(f"📄 Exported {len(ranked_links)} results to {json_path}")
+
+    if "csv" in formats:
+        csv_path = Path(output_dir) / "ranked_results.csv"
+        with open(csv_path, "w", newline='', encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["url", "text", "score"])
+            writer.writeheader()
+            for row in ranked_links:
+                writer.writerow({
+                    "url": row.get("url", ""),
+                    "score": row.get("score", 0),
+                    "text": row.get("text", "")  # truncate for readability
+                })
+        logger.success(f"📄 Exported {len(ranked_links)} results to {csv_path}")

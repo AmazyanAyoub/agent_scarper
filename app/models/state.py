@@ -1,5 +1,4 @@
-from typing import Dict, Any, TypedDict, List, Optional
-
+from typing import Dict, Any, TypedDict, List, Optional, Set
 
 class ScraperState(TypedDict):
     # User input
@@ -17,7 +16,16 @@ class ScraperState(TypedDict):
     parsed_data: Optional[Dict[str, Any]]
 
     # Crawl metadata
-    links: Optional[List[Dict[str, Any]]]
-    depth: Optional[int]
-    visited_urls: Optional[List[str]]
-    selected_url: Optional[List[Dict[str, Any]]]
+    visited: Optional[Set[str]]    # track visited URLs
+    depth: int                     # current BFS depth
+
+    # Multi-page results
+    candidate_pages: Optional[List[Dict[str, Any]]]   # raw {url, text}
+    ranked_links: Optional[List[Dict[str, Any]]]      # {url, text, score}
+    verified_links: Optional[List[Dict[str, Any]]]    # LLM-confirmed relevant
+    selected_url: Optional[str]
+    
+    # Status
+    status: Optional[str]          # e.g. "ok", "no_results"
+
+
