@@ -19,3 +19,4 @@ typer
 rich
 sentence-transformers
 hf_xet
+tldextract

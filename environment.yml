@@ -28,3 +28,4 @@ dependencies:
       - langgraph
       - sentence-transformers
       - hf_xet
+      - tldextract

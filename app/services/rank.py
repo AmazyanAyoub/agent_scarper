@@ -20,7 +20,7 @@ def rank_candidates(candidates: list, user_instruction: str, top_k: int = 3) -> 
     logger.info(f"Computing embeddings for {len(candidates)} candidates and the instruction.")
     instruction_emb = embedding_model.encode(user_instruction, convert_to_tensor=True)
 
-    text = [c["text"][:1000] for c in candidates]
+    text = [c["text"][:10000] for c in candidates]
     cand_emb = embedding_model.encode(text, convert_to_tensor=True)
 
     scores = util.cos_sim(instruction_emb, cand_emb)[0].cpu().tolist()

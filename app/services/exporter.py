@@ -5,8 +5,9 @@ import csv
 from loguru import logger
 from pathlib import Path
 from typing import List, Dict
+from app.core.config import OUTPUT_DIR
 
-def export_results(ranked_links: List[Dict], output_dir: str = "outputs", formats: List[str] = ["json", "csv"]) -> None:
+def export_results(ranked_links: List[Dict], output_dir: str = OUTPUT_DIR, formats: List[str] = ["json", "csv"]) -> None:
     """
     Export ranked results to JSON and/or CSV.
     Each entry = {"url": ..., "text": ..., "score": ...}
@@ -27,7 +28,6 @@ def export_results(ranked_links: List[Dict], output_dir: str = "outputs", format
             for row in ranked_links:
                 writer.writerow({
                     "url": row.get("url", ""),
-                    "score": row.get("score", 0),
                     "text": row.get("text", "")  # truncate for readability
                 })
         logger.success(f"📄 Exported {len(ranked_links)} results to {csv_path}")

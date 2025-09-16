@@ -1,7 +1,7 @@
 # main.py
 import typer
 from app.pipeline.graph import build_scraper_graph
-from app.services.exporter import save_to_json, save_to_csv
+from app.services.exporter import export_results
 
 app = typer.Typer()
 
@@ -21,12 +21,6 @@ def run(
 
     # Run graph
     result = graph.invoke(state)
-
-    # Print parsed result
-    print("===== FINAL RESULT =====")
-    text = result.get("parsed_data")
-    save_to_csv(text)
-    save_to_json(text)
 
 if __name__ == "__main__":
     app()

@@ -1,74 +1,109 @@
 import asyncio
+
 from loguru import logger
 
-from app.services.crawler import crawl_site_step
+from app.services.crawler import crawl_links, crawl_html
 from app.services.rank import rank_candidates
-from app.services.exporter import export_results
 from app.models.state import ScraperState
-from app.core.config import OUTPUT_DIR
 
-
-def crawl_node(state: ScraperState) -> ScraperState:
-    visited = state.get("visited", set())
-    frontier = state.get("frontier", [state["url"]])
+def crawl_links_node(state: ScraperState) -> ScraperState:
+    """
+    First step: check the seed URL's content.
+    If relevant → export immediately.
+    Else → crawl links.
+    """
+    frontier = state.get("frontier", [{"url": state["url"], "text": ""}])
+    visited_links = state.get("visited_links", set())
     depth = state.get("depth", 0)
 
-    logger.info(f"[Depth {depth}] Crawling {len(frontier)} pages")
+    # 1. Scrape the seed content
+    new_frontier, visited_links = asyncio.run(crawl_links(frontier, visited_links))
 
-    candidate_pages, visited, new_frontier = asyncio.run(
-        crawl_site_step(frontier, visited)
-    )
-
-    # Update state
-    state["candidate_pages"] = candidate_pages
-    state["visited"] = visited
     state["frontier"] = new_frontier
+    state["visited_links"] = visited_links
     state["depth"] = depth + 1
 
-    logger.info(f"🌐 Depth {state['depth']} finished. "
-                f"Found {len(candidate_pages)} candidate pages.")
+    # logger.info(
+    #     f"[Depth {state['depth']}] Finished crawl_links → "
+    #     f"{len(new_frontier)} links discovered | "
+    #     f"Visited so far: {len(visited_links)}"
+    # )
     return state
 
 
-def rank_node(state: ScraperState, top_k: int = 5) -> ScraperState:
-    candidates = state.get("candidate_pages", [])
-    instruction = state.get("instruction", "")
+def crawl_html_node(state: ScraperState, top_k: int = 3) -> ScraperState:
+    """
+    Node: Crawl HTML for the next batch of links from the frontier.
+    - Uses batch_index to slice frontier.
+    - Scrapes only top_k URLs in this round.
+    - Updates candidate_pages with new scraped pages.
+    """
 
-    if not candidates:
-        logger.warning("No candidates to score.")
+    frontier = state.get("frontier", [])
+    visited_html = state.get("visited_html_links", set())
+    batch_index = state.get("batch_index", 0)
+
+    start = batch_index * top_k
+    end = start + top_k
+    batch = frontier[start:end]
+
+    if not batch:
+        logger.warning("⚠️ No more links left to crawl in frontier.")
+        state["candidate_pages"] = []
         return state
     
-    ranked = rank_candidates(candidates, instruction, top_k=top_k)
-    state["ranked_links"] = ranked
+    logger.info(
+        f"📑 Crawling batch {batch_index+1}: "
+        f"links {start+1} → {min(end, len(frontier))} of {len(frontier)}"
+    )
+
+    candidate_pages, visited_html, _ = asyncio.run(crawl_html(batch, visited_html))
+
+    state["candidate_pages"] = candidate_pages
+    state["visited_html"] = visited_html
+    state["batch_index"] = batch_index + 1
+
+    logger.success(
+        f"✅ Batch {batch_index+1} finished. "
+        f"Crawled {len(candidate_pages)} pages. "
+        f"Verified so far: {len(state.get('verified_links', []))}"
+    )
 
     return state
 
 
-def export_node(state: ScraperState, output_dir: str = OUTPUT_DIR, formats: list = ["json", "csv"]) -> ScraperState:
-    """
-    Node wrapper for exporting ranked results.
-    Exports state["ranked_links"] into JSON/CSV.
-    """
-    ranked = state.get("ranked_links", [])
 
-    if not ranked:
-        logger.warning("⚠️ No ranked results found in state, nothing to export.")
-        return state
+def seed_node(state: ScraperState):
 
-    export_results(ranked, output_dir=output_dir, formats=formats)
-    logger.success("✅ Export completed successfully.")
+    url = state["url"]
+    visited_html_links = state.get("visited_html_links", set())
+    depth = state.get("depth", 0)
+    html = state.get("html", "")
+
+    candidate_pages, visited_html, html =  asyncio.run(crawl_html([{"url": url, "text": ""}], visited_html_links))
+
+    state["candidate_pages"] = candidate_pages
+    state["visited_html"] = visited_html
+    state["depth"] = depth + 1
+    state["html"] = html
 
     return state
 
-def no_results_node(state: ScraperState) -> ScraperState:
-    """
-    Node executed when no verified links are found and
-    crawling cannot continue (max depth reached or no more links).
-    """
-    logger.warning("❌ No verified results found. Crawling stopped.")
+# def rank_node(state: ScraperState, top_k: int = 5) -> ScraperState:
+#     candidates = state.get("candidate_pages", [])
+#     logger.info(f"Ranking {candidates} candidates.")
+#     instruction = state.get("instruction", "")
+
+#     if not candidates:
+#         logger.warning("No candidates to score.")
+#         return state
     
-    # Optional: mark in state so downstream systems know why we stopped
-    state["status"] = "no_results"
-    state["verified_links"] = []
-    
-    return state
+#     ranked = rank_candidates(candidates, instruction, top_k=top_k)
+#     logger.info(f"ranked {ranked} candidates selected.")
+#     state["ranked_links"] = ranked
+
+#     return state
+
+
+
+
