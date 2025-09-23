@@ -2,37 +2,189 @@
 
 from playwright.async_api import async_playwright
 from loguru import logger
-import traceback
-from bs4 import BeautifulSoup
-from typing import List, Dict
+from playwright_stealth import Stealth 
+from pathlib import Path
+import traceback, asyncio
 
-async def fetch_html(url: str, wait: int = 3000) -> str:
-    """
-    Extract html and all links from a page using Playwright (dynamic HTML).
-    Returns list of dicts: {"url": ..., "text": ...}
-    """
+from bs4 import BeautifulSoup
+from typing import List, Dict, Optional
+from app.services.captcha_manager import CaptchaManager, CaptchaDetected, CaptchaDecision
+from app.services.session_store import SessionStore
+import nodriver as uc
+from app.core.config import BROWSER_ARGS
+
+captcha_manager = CaptchaManager()
+session_store = SessionStore()
+
+VIEWPORT={"width": 1280, "height": 720}
+USER_AGENT=(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/118.0.5993.88 Safari/537.36"
+)
+
+launch_args = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--disable-setuid-sandbox",
+    "--no-sandbox",
+    "--no-first-run",
+    "--no-default-browser-check",
+]
+
+async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
+    browser = await playwright.chromium.launch(
+        headless=True,
+        args=BROWSER_ARGS,
+        channel="chrome",
+    )
+
+    context_kwargs = {
+        "viewport": VIEWPORT,
+        "user_agent": USER_AGENT,
+        "locale": "en-US",
+        "timezone_id": "America/New_York",
+    }
+
+    if storage_state_path and Path(storage_state_path).exists():
+        context_kwargs["storage_state"] = storage_state_path
+
+    context = await browser.new_context(**context_kwargs)
+
+    stealth = Stealth()
+    await stealth.apply_stealth_async(context)
+
+    page = await context.new_page()
+    await stealth.apply_stealth_async(page)
+
+    return browser, context, page
+
+
+async def _manual_solve(url: str, wait: int, timeout: Optional[int]) -> str:
+    """Open a manual session, capture storage_state to disk, and return its path."""
+    logger.warning(
+        "Opening manual solve window for %s. Complete the captcha in the browser before the timeout.",
+        url,
+    )
+
+    storage_state_path = session_store.storage_state_path(url)
+    browser = None
 
     try:
-        logger.info(f"Fetching html with playwright: {url}")
-        async with async_playwright() as p:
+        browser = await uc.start()
+        page = await browser.get(url)
 
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(url)
-            await page.wait_for_timeout(wait)  # wait for JS to load
-            html = await  page.content()
+        manual_wait_seconds = max(int(wait / 1000), 120)
+        if timeout:
+            manual_wait_seconds = max(manual_wait_seconds, int(timeout / 1000))
+
+        await asyncio.sleep(manual_wait_seconds)
+
+        origin = await page.evaluate("window.location.origin")
+        cookies = await browser.cookies.get_all()
+        local_storage_items = await page.get_local_storage()
+
+        cookies_formatted = [
+            {
+                "name": cookie.name,
+                "value": cookie.value,
+                "domain": cookie.domain,
+                "path": cookie.path,
+                "expires": cookie.expires if cookie.expires is not None else -1,
+                "httpOnly": cookie.http_only,
+                "secure": cookie.secure,
+                "sameSite": cookie.same_site.name.capitalize() if cookie.same_site else "Lax",
+            }
+            for cookie in cookies
+        ]
+
+        local_storage = [
+            {"name": key, "value": value}
+            for key, value in local_storage_items.items()
+        ]
+
+        storage_state = {
+            "cookies": cookies_formatted,
+            "origins": [
+                {
+                    "origin": origin,
+                    "localStorage": local_storage,
+                }
+            ],
+        }
+
+        session_store.import_storage_state(url, storage_state)
+        logger.info("Session stored after manual solve for %s.", url)
+
+        return storage_state_path
+    finally:
+        if browser:
+            try:
+                browser.stop()
+            except Exception:
+                logger.warning("Manual solve browser failed to stop cleanly.")
+
+
+async def _apply_solver_service(url: str) -> None:
+    logger.warning("Solver service not configured; skipping automated solve for %s", url)
+
+
+async def fetch_html(
+    url: str,
+    wait: int = 3000,
+    *,
+    timeout: Optional[int] = None,
+    attempt: int = 0,
+    max_attempts: int = 3,
+) -> str:
+    if attempt >= max_attempts:
+        logger.error("Max captcha attempts reached for %s; aborting fetch.", url)
+        return ""
+
+    storage_state_path = session_store.storage_state_path(url)
+
+    try:
+        logger.info("Fetching html with playwright: %s", url)
+
+        async with async_playwright() as p:
+            browser, context, page = await _create_stealth_context(p, storage_state_path)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            await page.wait_for_timeout(wait)
+            html = await page.content()
+            await context.storage_state(path=storage_state_path)
             await browser.close()
 
-            return html
-        
+        captcha_manager.handle(url, html)
+        return html
+
+    except CaptchaDetected as captcha_error:
+        logger.warning(str(captcha_error))
+
+        if captcha_error.decision == CaptchaDecision.reuse_session and Path(storage_state_path).exists():
+            logger.info("Retrying %s with stored session.", url)
+            return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
+
+        if captcha_error.decision == CaptchaDecision.manual_solve:
+            await _manual_solve(url, wait, timeout)
+            return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
+
+        if captcha_error.decision == CaptchaDecision.solver_service:
+            await _apply_solver_service(url)
+            return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
+
+        logger.error("Captcha decision '%s' led to abort for %s.", captcha_error.decision, url)
+        return ""
+
     except Exception as e:
-        logger.error(f"Playwright fetch failed for {url}: {repr(e)}") # repr() more complete: it shows the error type + message.
+        logger.error("Playwright fetch failed for %s: %r", url, e)
         logger.error(traceback.format_exc())
-        return "", []
+        return ""
 
 def fetch_links(html: str, url: str) -> List[Dict]:
     """
-    Extract html and all links from a page using Playwright (dynamic HTML).
+    Extract all links from a page using Playwright (dynamic HTML).
     Returns list of dicts: {"url": ..., "text": ...}
     """
 

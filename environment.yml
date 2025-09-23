@@ -29,3 +29,5 @@ dependencies:
       - sentence-transformers
       - hf_xet
       - tldextract
+      - nodriver
+      - playwright-stealth
