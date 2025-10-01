@@ -6,33 +6,15 @@ from playwright_stealth import Stealth
 from pathlib import Path
 import traceback, asyncio
 
-from bs4 import BeautifulSoup
-from typing import List, Dict, Optional
+# from bs4 import BeautifulSoup
+from typing import Optional
 from app.services.captcha_manager import CaptchaManager, CaptchaDetected, CaptchaDecision
 from app.services.session_store import SessionStore
 import nodriver as uc
-from app.core.config import BROWSER_ARGS
+from app.core.config import BROWSER_ARGS, VIEWPORT, USER_AGENT
 
 captcha_manager = CaptchaManager()
 session_store = SessionStore()
-
-VIEWPORT={"width": 1280, "height": 720}
-USER_AGENT=(
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/118.0.5993.88 Safari/537.36"
-)
-
-launch_args = [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process",
-    "--disable-gpu",
-    "--disable-dev-shm-usage",
-    "--disable-setuid-sandbox",
-    "--no-sandbox",
-    "--no-first-run",
-    "--no-default-browser-check",
-]
 
 async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
     browser = await playwright.chromium.launch(
@@ -61,26 +43,34 @@ async def _create_stealth_context(playwright, storage_state_path: Optional[str] 
 
     return browser, context, page
 
+async def wait_until_done_or_timeout(seconds: int):
+    try:
+        done, _ = await asyncio.wait(
+            [asyncio.to_thread(input, "Press Enter when done: ")],
+            timeout=seconds
+        )
+        return True if done else False
+    except Exception:
+        return False
 
-async def _manual_solve(url: str, wait: int, timeout: Optional[int]) -> str:
+async def _manual_solve(url: str, wait: int) -> str:
     """Open a manual session, capture storage_state to disk, and return its path."""
     logger.warning(
         "Opening manual solve window for %s. Complete the captcha in the browser before the timeout.",
         url,
     )
 
-    storage_state_path = session_store.storage_state_path(url)
     browser = None
 
     try:
         browser = await uc.start()
         page = await browser.get(url)
 
-        manual_wait_seconds = max(int(wait / 1000), 120)
-        if timeout:
-            manual_wait_seconds = max(manual_wait_seconds, int(timeout / 1000))
+        # manual_wait_seconds = wait
+        # if timeout:
+        #     manual_wait_seconds = max(manual_wait_seconds, int(timeout / 1000))
 
-        await asyncio.sleep(manual_wait_seconds)
+        await wait_until_done_or_timeout(wait)
 
         origin = await page.evaluate("window.location.origin")
         cookies = await browser.cookies.get_all()
@@ -118,7 +108,6 @@ async def _manual_solve(url: str, wait: int, timeout: Optional[int]) -> str:
         session_store.import_storage_state(url, storage_state)
         logger.info("Session stored after manual solve for %s.", url)
 
-        return storage_state_path
     finally:
         if browser:
             try:
@@ -136,14 +125,15 @@ async def fetch_html(
     wait: int = 3000,
     *,
     timeout: Optional[int] = None,
-    attempt: int = 0,
-    max_attempts: int = 3,
+    attempt: int = 0
 ) -> str:
-    if attempt >= max_attempts:
-        logger.error("Max captcha attempts reached for %s; aborting fetch.", url)
-        return ""
-
+    # if attempt >= max_attempts:
+    #     logger.error("Max captcha attempts reached for %s; aborting fetch.", url)
+    #     return ""
+    # attempt_1 = 0
     storage_state_path = session_store.storage_state_path(url)
+
+    storage_state = None
 
     try:
         logger.info("Fetching html with playwright: %s", url)
@@ -153,28 +143,34 @@ async def fetch_html(
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
             await page.wait_for_timeout(wait)
             html = await page.content()
-            await context.storage_state(path=storage_state_path)
+            storage_state = await context.storage_state()
             await browser.close()
 
         captcha_manager.handle(url, html)
+        if storage_state:
+            session_store.save(url, storage_state)
         return html
 
     except CaptchaDetected as captcha_error:
         logger.warning(str(captcha_error))
 
         if captcha_error.decision == CaptchaDecision.reuse_session and Path(storage_state_path).exists():
-            logger.info("Retrying %s with stored session.", url)
+            if attempt == 0:
+                logger.info("Retrying %s with stored session.", url)
+                return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
+            logger.info("Stored session failed for %s; escalating to manual solve.", url)
+            await _manual_solve(url, wait)
             return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
 
         if captcha_error.decision == CaptchaDecision.manual_solve:
-            await _manual_solve(url, wait, timeout)
+            await _manual_solve(url, wait)
             return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
 
-        if captcha_error.decision == CaptchaDecision.solver_service:
-            await _apply_solver_service(url)
-            return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
+        # if captcha_error.decision == CaptchaDecision.solver_service:
+        #     await _apply_solver_service(url)
+        #     return await fetch_html(url, wait, timeout=timeout, attempt=attempt + 1)
 
-        logger.error("Captcha decision '%s' led to abort for %s.", captcha_error.decision, url)
+        # logger.error("Captcha decision '%s' led to abort for %s.", captcha_error.decision, url)
         return ""
 
     except Exception as e:
@@ -182,26 +178,26 @@ async def fetch_html(
         logger.error(traceback.format_exc())
         return ""
 
-def fetch_links(html: str, url: str) -> List[Dict]:
-    """
-    Extract all links from a page using Playwright (dynamic HTML).
-    Returns list of dicts: {"url": ..., "text": ...}
-    """
+# def fetch_links(html: str, url: str) -> List[Dict]:
+#     """
+#     Extract all links from a page using Playwright (dynamic HTML).
+#     Returns list of dicts: {"url": ..., "text": ...}
+#     """
 
-    try:
-        logger.info(f"Fetching URL with playwright: {url}")
-        soup = BeautifulSoup(html, "html.parser")
-        links = []
-        for p in soup.find_all("a", href=True):
-            link_url = p["href"]
-            link_text = p.get_text(strip=True)
-            if link_url.startswith("/"):
-                link_url = url.rstrip("/") + link_url
-            links.append({"url": link_url, "text": link_text})
+#     try:
+#         logger.info(f"Fetching URL with playwright: {url}")
+#         soup = BeautifulSoup(html, "html.parser")
+#         links = []
+#         for p in soup.find_all("a", href=True):
+#             link_url = p["href"]
+#             link_text = p.get_text(strip=True)
+#             if link_url.startswith("/"):
+#                 link_url = url.rstrip("/") + link_url
+#             links.append({"url": link_url, "text": link_text})
 
-        return links
-    except Exception as e:
-        logger.error(f"Playwright fetch failed for {url}: {repr(e)}")
-        logger.error(traceback.format_exc())
-        return []
+#         return links
+#     except Exception as e:
+#         logger.error(f"Playwright fetch failed for {url}: {repr(e)}")
+#         logger.error(traceback.format_exc())
+#         return []
 

@@ -3,13 +3,17 @@
 from dotenv import load_dotenv
 import os, re
 from loguru import logger
-
+from pathlib import Path
 # Load .env file
 load_dotenv()
 
 # API Keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+DATA_FILE = "app/data/classified_sites.json"
+
+DEFAULT_SELECTOR_CACHE_PATH = Path("app/data/selector_cache.json")
 
 SUSPECT_TEXT_KEYWORDS = (
     "unusual traffic",
@@ -85,4 +89,12 @@ SUSPECT_TITLE_PATTERNS = (
     re.compile(r"cf[- ]?error", re.I),
     re.compile(r"verification required", re.I),
     re.compile(r"attention required", re.I),
+)
+
+VIEWPORT={"width": 1280, "height": 720}
+
+USER_AGENT=(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/118.0.5993.88 Safari/537.36"
 )

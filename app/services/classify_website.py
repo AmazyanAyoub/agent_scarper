@@ -10,8 +10,7 @@ from app.models.WebsiteClassifier import WebsiteTypeClassifier
 from app.services.llm_engine import get_llm
 from app.services.fetcher import fetch_html
 from app.prompts.prompts import EXPANDED_CLASSIFIER_PROMPT
-
-DATA_FILE = "app/data/classified_sites.json"
+from app.core.config import DATA_FILE
 
 
 def load_examples():
@@ -47,17 +46,15 @@ def build_hybrid_classifier(url: str) -> str:
     """
     Classify a website type using memory few-shot + LLM.
     """
-
-    # 1. Fetch HTML
-    html = asyncio.run(fetch_html(url))
-    snippet = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)[:1000]
-    print(snippet)
-
-    # 2. Check if already classified
+    # 1. Check if already classified
     data = load_examples()
     for entry in data:
         if entry["url"] == url:
             return entry["label"]
+
+    # 2. Fetch HTML
+    html = asyncio.run(fetch_html(url))
+    snippet = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)[:1000]
 
     # 3. Select balanced examples
     examples_str = select_examples(data)

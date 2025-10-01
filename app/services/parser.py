@@ -93,7 +93,7 @@ def detect_search_selector_llm(html: str) -> str:
         snippet = html[:8000]
 
     snippet = snippet[:8000]
-
+    
     prompt = SEARCH_SELECTOR_PROMPT.format(snippet=snippet)
     response = llm.invoke(prompt)
     return response.content.strip()

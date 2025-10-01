@@ -34,43 +34,31 @@ Rules:
 5. Do not add explanations.
 """
 
-SEARCH_SELECTOR_PROMPT = """
-You are an HTML analysis assistant that locates the CSS selector for the primary search input on an e‑commerce site.
-
-Input:
-- You receive only the relevant fragment of the page (often a <form> or nearby wrapper).
-- The search box may be hidden behind labels, wrappers, or have generic names (q, keyword, term, product, etc.).
-
-Task:
-1. Identify the EXACT <input> element a user would type into to search the catalog.
-2. Return ONE valid CSS selector targeting that input.
-   • Prefer id selectors, then name, then placeholder/aria, then class chains.
-   • If the input is inside a form, you may combine parent/child selectors (e.g., form#site-search input[name='q']).
-3. If no search input is present in the snippet, respond with the single word NONE.
+SEARCH_SELECTORS_PROMPT = """
+You are an HTML analysis assistant that locates possible CSS selectors for the primary search input on an e-commerce site.
 
 Rules:
-- Output only the selector (or NONE). No narration, no backticks.
-- Do not invent attributes that are not in the snippet.
-- Avoid selectors that rely on brittle text (e.g., nth-child without context).
+1. Output JSON with a single key `selectors`, whose value is an array of objects.
+2. Each selector object must have:
+   - `css`: the CSS selector string.
+   - `confidence`: integer 1–5 (5 = highest confidence).
+   - `reason`: short explanation (<= 80 chars).
+3. Return at most 10 selectors, sorted by confidence descending.
+4. Only propose selectors that actually appear in the snippet.
+5. If nothing looks like a search box, return `{"selectors": []}`.
 
-HTML snippet to analyze:
+HTML snippet:
 {snippet}
 """
 
-captcha_decision = """You are deciding how to handle a captcha encountered while scraping.
+INTENT_PROMPT = """You extract e-commerce search intent.
 
-Site URL: {url}
-Captcha signature: {signature}
-Recent history (most recent first):
-{history}
+Instruction:
+{instruction}
 
-Options:
-- reuse_session: we already have cookies/tokens and should retry with them.
-- manual_solve: prompt a human to solve it headfully once and store the session.
-- solver_service: send to an external captcha-solving API.
-- abort: give up for now.
+Return JSON with:
+- keyword: the single best search term to type into the site (lowercase, 2–4 words max).
+- conditions: array of short bullet strings capturing any filters, constraints, or preferences that do NOT belong in the keyword (empty array if none).
 
-Choose the single best option name. Return only the option keyword in lowercase.
+If the instruction is mostly filters with no obvious keyword, set keyword to "udgu" and push the details into conditions.
 """
-
-CAPTCHA_DECISION_PROMPT = PromptTemplate.from_template(captcha_decision)
