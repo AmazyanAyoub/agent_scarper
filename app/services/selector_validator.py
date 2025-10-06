@@ -14,7 +14,7 @@ from app.services.session_store import SessionStore
 
 @dataclass
 class SelectorValidator:
-    wait_for_selector: int = 5000
+    wait_for_selector: int = 10000
     navigation_timeout: int = 60000
     post_submit_wait: int = 5000
 
@@ -37,19 +37,21 @@ class SelectorValidator:
                 await page.goto(url, wait_until="domcontentloaded", timeout=self.navigation_timeout)
 
                 for selector in selector_list:
-                    if skip_validation:
-                        html = await self._fill_and_submit(page, handle, keyword)
-                        await page.wait_for_timeout(self.post_submit_wait)
-                        await context.storage_state(path=storage_state_path)
-                        logger.success("Selector '%s' validated and submitted successfully", selector)
-                        return selector, html
                     logger.info("Validating selector '%s'", selector)
-                    handle = await self._get_valid_handle(page, selector)
-                    if not handle:
-                        logger.warning("Selector '%s' failed validation", selector)
-                        continue
-                    html = await self._fill_and_submit(page, handle, keyword)
-                    await page.wait_for_timeout(self.post_submit_wait)
+                    if skip_validation:
+                        try:
+                            handle = await page.wait_for_selector(selector, timeout=self.wait_for_selector)
+                        except TimeoutError:
+                            logger.warning("Selector '%s' not found during skip-validation path", selector)
+                            continue
+                    else:
+                        handle = await self._get_valid_handle(page, selector)
+                        if not handle:
+                            logger.warning("Selector '%s' failed validation", selector)
+                            continue
+                    await self._fill_and_submit(page, handle, keyword)
+                    await self._await_results(page)
+                    html = await page.content()
                     await context.storage_state(path=storage_state_path)
                     logger.success("Selector '%s' validated and submitted successfully", selector)
                     return selector, html
@@ -61,6 +63,22 @@ class SelectorValidator:
                     logger.warning("Playwright browser failed to close cleanly")
         return None
 
+
+    async def _await_results(self, page: Page) -> None:
+        """Wait for a search results grid/list to appear before capturing HTML."""
+        result_selectors = [
+            ".srp-results",
+            ".s-item",
+            "[data-testid='listing']",
+            "[data-component-type='s-search-result']",
+        ]
+        for selector in result_selectors:
+            try:
+                await page.wait_for_selector(selector, timeout=self.post_submit_wait)
+                break
+            except TimeoutError:
+                continue
+        await page.wait_for_load_state("networkidle")
 
     def _deduplicate(self, selectors: Iterable[str]) -> list[str]:
         seen = set()
@@ -99,6 +117,3 @@ class SelectorValidator:
         await handle.fill("")
         await handle.type(keyword, delay=50)
         await handle.press("Enter")
-        await page.wait_for_timeout(500)
-        html = await page.content()
-        return html

@@ -18,7 +18,7 @@ session_store = SessionStore()
 
 async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
     browser = await playwright.chromium.launch(
-        headless=True,
+        headless=False,
         args=BROWSER_ARGS,
         channel="chrome",
     )

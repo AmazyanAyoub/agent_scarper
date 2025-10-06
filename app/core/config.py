@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os, re
 from loguru import logger
 from pathlib import Path
+from typing import Tuple
 # Load .env file
 load_dotenv()
 
@@ -97,4 +98,29 @@ USER_AGENT=(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/118.0.5993.88 Safari/537.36"
+)
+
+
+PRODUCT_CARD_KEYWORDS = (
+    "price",
+    "product",
+    "card",
+    "item",
+    "result",
+)
+
+PRICE_REGEX = re.compile(r"(?:([€$£¥]|USD|EUR|GBP|¥|DH)\s*)?([0-9]+(?:[.,][0-9]{2})?)(?:\s*([€$£¥]|USD|EUR|GBP|¥|DH))?")
+
+PRODUCT_CONTAINER_TAGS: Tuple[str, ...] = ("article", "li", "div", "section")
+
+CLASS_KEYWORDS = (
+    "product",
+    "item",
+    "tile",
+    "card",
+    "listing",
+    "offer",
+    "result",
+    "grid",
+    "row",
 )

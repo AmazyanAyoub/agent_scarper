@@ -42,7 +42,6 @@ Rules:
 2. Each selector object must have:
    - `css`: the CSS selector string.
    - `confidence`: integer 1–5 (5 = highest confidence).
-   - `reason`: short explanation (<= 80 chars).
 3. Return at most 10 selectors, sorted by confidence descending.
 4. Only propose selectors that actually appear in the snippet.
 5. If nothing looks like a search box, return `{"selectors": []}`.
@@ -51,14 +50,30 @@ HTML snippet:
 {snippet}
 """
 
-INTENT_PROMPT = """You extract e-commerce search intent.
+SEARCH_INTENT_PROMPT = """
+You are an e-commerce search planner. Distil the user’s instruction into a primary search keyword and structured conditions.
+
+Rules:
+1. Move only the essential term(s) into keyword; everything else becomes conditions.
+2. If the instruction is mostly filters and no obvious keyword, set keyword to "udgu".
+3. `apply_via` must be "keyword" when the condition is best expressed directly in the query (e.g. specific brand or model); otherwise "filter".
+4. Conditions array can be empty; omit null/empty fields.
+5. No narration; return JSON only.
+
 
 Instruction:
 {instruction}
 
-Return JSON with:
-- keyword: the single best search term to type into the site (lowercase, 2–4 words max).
-- conditions: array of short bullet strings capturing any filters, constraints, or preferences that do NOT belong in the keyword (empty array if none).
-
-If the instruction is mostly filters with no obvious keyword, set keyword to "udgu" and push the details into conditions.
+Output STRICT JSON with:
+{{
+  "keyword": "<string>",
+  "conditions": [
+    {{
+      "name": "<condition_name>",   // e.g. price_max, brand, color, rating
+      "value": "<condition_value>", // short human-readable value, keep symbols (€, %, etc.)
+      "apply_via": "keyword" | "filter" // keyword = append to search string; filter = requires UI control
+    }},
+    ...
+  ]
+}}
 """
