@@ -65,7 +65,6 @@ class SelectorValidator:
 
 
     async def _await_results(self, page: Page) -> None:
-        """Wait for a search results grid/list to appear before capturing HTML."""
         result_selectors = [
             ".srp-results",
             ".s-item",
@@ -78,7 +77,10 @@ class SelectorValidator:
                 break
             except TimeoutError:
                 continue
-        await page.wait_for_load_state("networkidle")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=self.post_submit_wait)
+        except TimeoutError:
+            logger.warning("Timed out waiting for network idle; continuing with current HTML")
 
     def _deduplicate(self, selectors: Iterable[str]) -> list[str]:
         seen = set()

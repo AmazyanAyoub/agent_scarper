@@ -77,3 +77,7 @@ Output STRICT JSON with:
   ]
 }}
 """
+
+CARD_PROMPT = """
+
+"""

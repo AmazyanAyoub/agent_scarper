@@ -16,7 +16,7 @@ async def main():
         return
 
     context = await run_ecommerce_flow(url, instruction)
-    # print(context.instruction)
+    print(context.products)
     # print(context.search_keyword)
     # print(context.url)
     # print(context.validated_selector)
