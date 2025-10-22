@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 
-class Card(BaseModel):
+class Cards(BaseModel):
     """
     Generic listing 'card' that fits products, venues, jobs, etc.
     All fields are optional; we keep it flexible.

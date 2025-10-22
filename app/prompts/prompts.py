@@ -44,7 +44,7 @@ Rules:
    - `confidence`: integer 1–5 (5 = highest confidence).
 3. Return at most 10 selectors, sorted by confidence descending.
 4. Only propose selectors that actually appear in the snippet.
-5. If nothing looks like a search box, return `{"selectors": []}`.
+5. If nothing looks like a search box, return `{{"selectors": []}}`.
 
 HTML snippet:
 {snippet}

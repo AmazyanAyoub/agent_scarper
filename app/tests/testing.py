@@ -5,7 +5,7 @@ from app.strategies.ecommerce import run_ecommerce_flow
 
 
 async def main():
-    url = "https://www.ebay.com"
+    url = "https://www.jumia.ma"
     instruction = "I want the iphone 15 with 256go new or old"
 
     site_type = await asyncio.to_thread(build_hybrid_classifier, url)
@@ -16,7 +16,7 @@ async def main():
         return
 
     context = await run_ecommerce_flow(url, instruction)
-    print(context.products)
+    # print(context.products)
     # print(context.search_keyword)
     # print(context.url)
     # print(context.validated_selector)

@@ -125,3 +125,80 @@ CLASS_KEYWORDS = (
     "grid",
     "row",
 )
+
+
+# ---- Card extraction heuristics ----
+
+CARD_PRICE_PATTERN = re.compile(
+    r"(?i)([\$€£]\s?)?\d[\d,]*(\.\d{2})?(?:\s?(usd|eur|gbp|dh|aed|sar))?"
+)
+
+CARD_STOP_WORDS = {
+    "watchlist",
+    "save this search",
+    "sponsored",
+    "shop store",
+    "filter",
+    "add to cart",
+}
+
+CARD_TITLE_SELECTORS = [
+    '[class*="title"]',
+    '[data-test*="title"]',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'a[href]'
+]
+
+CARD_PRICE_SELECTORS = [
+    '[class*="price"]',
+    '[data-test*="price"]',
+    '[data-testid*="price"]',
+    '[class*="amount"]',
+    'span'
+]
+
+CARD_SUBTITLE_SELECTORS = [
+    '[class*="subtitle"]',
+    '[data-test*="subtitle"]',
+    '[class*="secondary"]',
+    '[data-testid*="condition"]'
+]
+
+CARD_SHIPPING_SELECTORS = [
+    '[class*="shipping"]',
+    '[data-test*="shipping"]',
+    '[data-testid*="shipping"]'
+]
+
+CARD_LOCATION_SELECTORS = [
+    '[class*="location"]',
+    '[data-test*="location"]',
+    '[data-testid*="location"]'
+]
+
+CARD_SELLER_SELECTORS = [
+    '[class*="seller"]',
+    '[data-test*="seller"]',
+    '[class*="feedback"]'
+]
+
+CARD_HIGHLIGHT_SELECTORS = [
+    '[class*="badge"]',
+    '[data-testid*="highlight"]',
+    'ul li'
+]
+
+CARD_MIN_SELECTOR_HITS = 6
+
+
+CARD_DETAIL_HREF_PATTERNS = (
+    "/itm/",           # eBay
+    "/dp/",            # Amazon
+    "/product/",       # Shopify / others
+    "/listing/",       # Etsy / common
+    "sku=",            # generic SKU links
+    "item="
+)

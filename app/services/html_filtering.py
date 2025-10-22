@@ -1,327 +1,199 @@
-"""Post-search HTML processing: extract and clean product entries."""
+"""Heuristic product-card extractor for rendered search-result HTML."""
 
 from __future__ import annotations
 
+from collections import Counter
 import re
-import json
-from dataclasses import dataclass, asdict
-from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
-from urllib.parse import urljoin
+from typing import Iterable, List, Optional
 
 from bs4 import BeautifulSoup, Tag
-from loguru import logger
-from app.core.config import PRICE_REGEX, PRODUCT_CONTAINER_TAGS, CLASS_KEYWORDS
-from app.services.llm_engine import get_llm   # <-- you said you have this
+from pydantic import ValidationError
+
+from app.models.cards import Cards
+from app.core.config import (
+    CARD_PRICE_PATTERN,
+    CARD_STOP_WORDS,
+    CARD_TITLE_SELECTORS,
+    CARD_PRICE_SELECTORS,
+    CARD_SUBTITLE_SELECTORS,
+    CARD_SHIPPING_SELECTORS,
+    CARD_LOCATION_SELECTORS,
+    CARD_SELLER_SELECTORS,
+    CARD_HIGHLIGHT_SELECTORS,
+    CARD_MIN_SELECTOR_HITS,
+    CARD_DETAIL_HREF_PATTERNS,
+)
 
 
-@dataclass
-class ProductEntry:
-    title: str
-    url: str
-    price: Optional[float] = None
-    currency: Optional[str] = None
-    image: Optional[str] = None
-    snippet: Optional[str] = None
+def _node_has_price(node: Tag) -> bool:
+    text = node.get_text(" ", strip=True).lower()
+    if any(stop in text for stop in CARD_STOP_WORDS):
+        return False
+    return bool(CARD_PRICE_PATTERN.search(text))
 
 
-USE_LLM_VALIDATION = False 
+def _node_has_anchor(node: Tag) -> bool:
+    for a in node.find_all("a", href=True):
+        href = a["href"]
+        if any(pat in href for pat in CARD_DETAIL_HREF_PATTERNS):
+            return True
+    return False
 
 
-# ---------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------
+def _css_path(node: Tag) -> str:
+    parts: list[str] = []
+    cur: Optional[Tag] = node
+    while cur and cur.name not in ("html", "body"):
+        classes = "." + ".".join(sorted(c for c in cur.get("class", []) if c))
+        parts.append(f"{cur.name}{classes}" if classes != "." else cur.name)
+        cur = cur.parent if isinstance(cur.parent, Tag) else None
+    return " > ".join(reversed(parts))
 
-def extract_products(html: str, base_url: str, limit: Optional[int] = None) -> List[ProductEntry]:
-    """Return a normalized list of product entries from the search results."""
-    soup = BeautifulSoup(html, "html.parser")
 
-    # 1. Try structured data first
-    products = _extract_from_structured_data(soup, base_url)
-    if products:
-        logger.info("Extracted %d products from structured data", len(products))
-        if limit:
-            products = products[:limit]
-        return products
-
-    # 2. Heuristic DOM scan
-    scored_cards = _rank_candidate_cards(soup)
-    results: List[ProductEntry] = []
-    seen = set()
-
-    for node, _ in scored_cards:
-        full_text = node.get_text(" ", strip=True)
-        confidence = _compute_confidence(node, full_text)
-        entry = _parse_card(node, base_url)
-        if not entry:
+def _discover_card_selector(html: str, min_hits: int = 6) -> Optional[str]:
+    min_hits = max(min_hits, CARD_MIN_SELECTOR_HITS)
+    soup = BeautifulSoup(html, "lxml")
+    candidates = [
+        node
+        for node in soup.find_all(["li", "article", "div", "section"])
+        if _node_has_price(node) and _node_has_anchor(node)
+    ]
+    freq = Counter(_css_path(node) for node in candidates)
+    for path, hits in freq.most_common():
+        if hits < min_hits:
             continue
-        if confidence >= 8:        # ✅ High confidence → accept directly
-            pass
-        elif confidence >= 4:      # 🤔 Medium → send to LLM
-            if USE_LLM_VALIDATION and not _validate_with_llm(entry, node):
-                continue
-        else:                      # ❌ Low confidence → skip
-            continue
-
-        dedupe_key = (entry.title.strip().lower(), entry.url)
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        results.append(entry)
-
-        if limit and len(results) >= limit:
-            break
-
-    logger.info("Extracted %d product entries", len(results))
-    return results
-
-
-def save_products(products: List[ProductEntry], path: str | Path) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = [asdict(product) for product in products]
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Saved %d products to %s", len(products), target)
-
-
-# ---------------------------------------------------------------------
-# Structured Data
-# ---------------------------------------------------------------------
-
-def _extract_from_structured_data(soup: BeautifulSoup, base_url: str) -> List[ProductEntry]:
-    """Look for JSON-LD / microdata / OpenGraph product info."""
-    products: List[ProductEntry] = []
-
-    # JSON-LD
-    for script in soup.find_all("script", type="application/ld+json"):
         try:
-            data = json.loads(script.string or "")
+            nodes = soup.select(path)
         except Exception:
             continue
-        if isinstance(data, dict):
-            data = [data]
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            if item.get("@type") in ["Product", "Offer"]:
-                name = item.get("name") or item.get("title")
-                url = urljoin(base_url, item.get("url") or "")
-                price = None
-                currency = None
-                offers = item.get("offers")
-                if isinstance(offers, dict):
-                    price = offers.get("price")
-                    currency = offers.get("priceCurrency")
-                elif isinstance(offers, list) and offers:
-                    price = offers[0].get("price")
-                    currency = offers[0].get("priceCurrency")
-                image = item.get("image")
-                if name and url:
-                    try:
-                        price = float(str(price).replace(",", "")) if price else None
-                    except:
-                        price = None
-                    products.append(ProductEntry(title=name, url=url, price=price, currency=currency, image=image))
-    return products
-
-
-# ---------------------------------------------------------------------
-# DOM Heuristic Scoring
-# ---------------------------------------------------------------------
-
-def _rank_candidate_cards(soup: BeautifulSoup, max_candidates: int = 250) -> List[Tuple[Tag, float]]:
-    scored: List[Tuple[Tag, float]] = []
-    seen: set[int] = set()
-
-    for price_node in soup.find_all(string=PRICE_REGEX):
-        if _looks_like_rating(price_node):
-            continue
-        container = _bubble_up_to_container(price_node.parent)
-        if not container:
-            continue
-        ident = id(container)
-        if ident in seen:
-            continue
-        seen.add(ident)
-        scored.append((container, _score_node(container)))
-
-    if not scored:
-        for node in soup.find_all(PRODUCT_CONTAINER_TAGS):
-            if not isinstance(node, Tag):
-                continue
-            if any(keyword in " ".join(node.get("class", [])).lower() for keyword in CLASS_KEYWORDS):
-                ident = id(node)
-                if ident in seen:
-                    continue
-                seen.add(ident)
-                scored.append((node, _score_node(node)))
-
-    if not scored:
-        for node in soup.find_all("a", href=True):
-            ident = id(node)
-            if ident in seen:
-                continue
-            seen.add(ident)
-            scored.append((node, _score_node(node)))
-
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-    return scored[:max_candidates]
-
-
-def _bubble_up_to_container(node: Tag | None) -> Optional[Tag]:
-    while node and node.name not in PRODUCT_CONTAINER_TAGS:
-        node = node.parent  # type: ignore[assignment]
-    return node
-
-def _compute_confidence(node: Tag, text: str) -> float:
-    score = 0.0
-    valid_price = bool(PRICE_REGEX.search(text)) and not _looks_like_rating(text)
-    if valid_price:
-        score += 5
-    if re.search(r'[\$\€\£\¥]|usd|eur|gbp|jpy', text, re.I):
-        score += 2
-    if node.find("img", src=True):
-        score += 2
-    anchors = node.find_all("a", href=True)
-    if any(len(a.get_text(" ", strip=True).split()) >= 5 for a in anchors):
-        score += 2
-    classes = " ".join(node.get("class", [])).lower()
-    if any(k in classes for k in ["product", "item", "card", "listing"]):
-        score += 1
-    # repetition: siblings with same tag/class
-    sibs = node.find_parent().find_all(node.name, class_=node.get("class")) if node.parent else []
-    if sibs and len(sibs) >= 3:
-        score += 3
-    if _looks_like_rating(text):
-        score -= 5
-    if valid_price and PRICE_REGEX.search(text) and float(PRICE_REGEX.search(text).group(2).replace(",","") or 0) < 5:
-        score -= 3
-    if len(text) < 20 or len(text) > 600:
-        score -= 2
-    return score
-
-def _score_node(node: Tag) -> float:
-    text = node.get_text(" ", strip=True)
-    score = 0.0
-
-    price_matches = PRICE_REGEX.findall(text)
-    if price_matches:
-        score += 5 + len(price_matches)
-
-    anchors = node.find_all("a", href=True)
-    if anchors:
-        score += 4
-        if len(anchors) > 1:
-            score += 1
-
-    if node.find("img", src=True):
-        score += 2
-
-    classes = " ".join(node.get("class", [])).lower()
-    for keyword in CLASS_KEYWORDS:
-        if keyword in classes:
-            score += 1.5
-            break
-
-    if 40 <= len(text) <= 600:
-        score += 1.5
-
-    depth = 0
-    parent = node.parent
-    while parent and depth < 6:
-        depth += 1
-        parent = parent.parent
-    score -= depth * 0.3
-
-    if _looks_like_rating(text):
-        score -= 6
-
-    return score
-
-
-def _looks_like_rating(text: str) -> bool:
-    return bool(re.search(r"\b\d+(\.\d+)?\s*out\s*of\s*5\s*stars?", text, re.I))
-
-
-def _parse_card(node: Tag, base_url: str) -> Optional[ProductEntry]:
-    full_text = node.get_text(" ", strip=True)
-    price_match = PRICE_REGEX.search(full_text)
-    if not price_match or _looks_like_rating(full_text):
-        return None
-
-    currency = price_match.group(1) or price_match.group(3)
-    raw_price = price_match.group(2).replace(",", "")
-    try:
-        price_value = float(raw_price)
-    except ValueError:
-        price_value = None
-
-    if price_value is not None and price_value < 5:
-        return None
-
-    link = _select_anchor(node)
-    if not link:
-        return None
-
-    title = link.get_text(" ", strip=True)
-    if len(title) < 3:
-        return None
-
-    url = urljoin(base_url, link["href"])
-    img_tag = node.find("img", src=True)
-    image = urljoin(base_url, img_tag["src"]) if img_tag else None
-    snippet = _extract_snippet(node, exclude=link)
-
-    return ProductEntry(title=title, url=url, price=price_value, currency=currency, image=image, snippet=snippet)
-
-
-def _select_anchor(node: Tag) -> Optional[Tag]:
-    anchors = node.find_all("a", href=True)
-    if not anchors:
-        return None
-    def anchor_score(a: Tag) -> float:
-        score = len(a.get_text(" ", strip=True))
-        if a.find("img"):
-            score += 5
-        return score
-    anchors.sort(key=anchor_score, reverse=True)
-    return anchors[0]
-
-
-def _extract_snippet(node: Tag, exclude: Tag) -> Optional[str]:
-    for desc_tag in node.find_all(["p", "span", "div"]):
-        if desc_tag is exclude:
-            continue
-        text = desc_tag.get_text(" ", strip=True)
-        if 20 <= len(text) <= 200:
-            return text
+        if nodes and _node_has_price(nodes[0]) and _node_has_anchor(nodes[0]):
+            return path
     return None
 
 
-# ---------------------------------------------------------------------
-# Optional LLM Validation
-# ---------------------------------------------------------------------
+def _pick_text(node: Tag, selectors: Iterable[str], min_len: int = 4) -> str:
+    for sel in selectors:
+        for el in node.select(sel):
+            text = el.get_text(" ", strip=True)
+            if len(text) >= min_len and not any(stop in text.lower() for stop in CARD_STOP_WORDS):
+                return text
+    return ""
 
-def _validate_with_llm(entry: ProductEntry, node: Tag) -> bool:
-    """Ask LLM if this looks like a valid product card."""
-    try:
-        llm = get_llm()
-    except Exception:
-        return True  # if no LLM available, skip validation
 
-    prompt = (
-        "You are an HTML product card validator.\n"
-        "Given the following HTML snippet, decide if it is a real product (not a review widget or rating):\n\n"
-        f"Title: {entry.title}\nPrice: {entry.price} {entry.currency}\n"
-        f"Snippet: {entry.snippet}\nHTML:\n{str(node)[:1500]}\n\n"
-        "Answer with only 'yes' or 'no'."
-    )
+def _pick_url(node: Tag, title: str) -> str:
+    title_lower = title.lower()
+    for a in node.select("a[href*='/itm/']"):
+        href = a["href"].strip()
+        link_text = a.get_text(" ", strip=True).lower()
+        if href and not href.startswith("javascript:") and title_lower[:32] in link_text:
+            return href
+    for a in node.select("a[href*='/itm/']"):
+        href = a["href"].strip()
+        if href and not href.startswith("javascript:"):
+            return href
+    for a in node.find_all("a", href=True):
+        href = a["href"].strip()
+        if href and not href.startswith("javascript:"):
+            return href
+    return ""
+
+
+def _pick_image(node: Tag) -> str:
+    img = node.find("img")
+    if not img:
+        return ""
+    for key in ("data-src", "data-image-src", "srcset", "src"):
+        val = img.get(key)
+        if val:
+            if key == "srcset":
+                return val.split()[0]
+            return val
+    return ""
+
+
+def _collect_highlights(node: Tag, selectors: Iterable[str]) -> list[str]:
+    highlights: list[str] = []
+    for sel in selectors:
+        for el in node.select(sel):
+            text = el.get_text(" ", strip=True)
+            if text and len(text) > 3 and text.lower() not in CARD_STOP_WORDS:
+                highlights.append(text)
+    return list(dict.fromkeys(highlights))
+
+
+def _parse_price_value(text: str) -> Optional[float]:
+    match = CARD_PRICE_PATTERN.search(text or "")
+    if not match:
+        return None
+    numeric_part = re.sub(r"[^\d.]", "", match.group(0))
     try:
-        result = llm.invoke(prompt)
-        if isinstance(result, str):
-            text = result.lower()
-        else:
-            text = str(result).lower()
-        return "yes" in text
-    except Exception:
-        return True  # fail open
+        return float(numeric_part) if numeric_part else None
+    except ValueError:
+        return None
+
+
+def extract_cards(html: str, limit: int = 50) -> list[Cards]:
+    soup = BeautifulSoup(html, "lxml")
+    selector = _discover_card_selector(html)
+    print(f"[extract_cards] selector -> {selector}")
+    if not selector:
+        return []
+
+    cards: list[Cards] = []
+    for node in soup.select(selector):
+        title = _pick_text(node, CARD_TITLE_SELECTORS, min_len=6)
+        url = _pick_url(node, title)
+        if not title or not url or "/sch/" in url.lower():
+            continue
+
+        # text_blob = node.get_text(" ", strip=True).lower().replace(" ", "")
+        # if "sponsored" in text_blob or "derosnops" in text_blob:
+        #     continue
+
+        price_text = _pick_text(node, CARD_PRICE_SELECTORS, min_len=2)
+        price_value = _parse_price_value(price_text)
+        subtitle = _pick_text(node, CARD_SUBTITLE_SELECTORS, min_len=4)
+        shipping = _pick_text(node, CARD_SHIPPING_SELECTORS, min_len=4)
+        location = _pick_text(node, CARD_LOCATION_SELECTORS, min_len=4)
+        seller = _pick_text(node, CARD_SELLER_SELECTORS, min_len=4)
+        highlights = _collect_highlights(node, CARD_HIGHLIGHT_SELECTORS)
+        image_url = _pick_image(node)
+
+        specs = {
+            "raw_html": node.prettify(),
+            "shipping": shipping,
+            "highlights": highlights,
+        }
+        if subtitle:
+            specs["subtitle"] = subtitle
+        if location:
+            specs["location"] = location
+        if seller:
+            specs["seller"] = seller
+
+        payload = {
+            "title": title,
+            "name": title,
+            "url": url,
+            "image_url": image_url,
+            "description": subtitle or "",
+            "price": price_text,
+            "specs": specs,
+            "rating": None,
+            "reviews_count": None,
+            "availability": None,
+            "brand": None,
+            "model": None,
+            "category": None,
+        }
+
+        try:
+            card = Cards(**payload)
+            cards.append(card)
+        except ValidationError:
+            continue
+
+        if len(cards) >= limit:
+            break
+
+    return cards

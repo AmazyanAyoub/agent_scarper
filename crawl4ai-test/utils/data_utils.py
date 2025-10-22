@@ -2,7 +2,7 @@
 import csv
 from typing import Dict, Iterable, List
 
-from models.Cards import Card  # Venue still available as alias
+from models.Cards import Cards  # Venue still available as alias
 
 def _normalize_title(d: Dict) -> str:
     return (d.get("title") or d.get("name") or d.get("product_name") or d.get("heading") or "").strip()
@@ -32,7 +32,7 @@ def is_complete_venue(item: Dict, required_keys: List[str]) -> bool:
 
 def _collect_headers(rows: Iterable[Dict]) -> List[str]:
     seen = set()
-    base = list(Card.model_fields.keys())  # start with schema order
+    base = list(Cards.model_fields.keys())  # start with schema order
     for k in base:
         seen.add(k)
     extras = []

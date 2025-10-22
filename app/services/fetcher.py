@@ -2,7 +2,7 @@
 
 from playwright.async_api import async_playwright
 from loguru import logger
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth
 from pathlib import Path
 import traceback, asyncio
 
@@ -13,12 +13,13 @@ from app.services.session_store import SessionStore
 import nodriver as uc
 from app.core.config import BROWSER_ARGS, VIEWPORT, USER_AGENT
 
+stealth = Stealth()
 captcha_manager = CaptchaManager()
 session_store = SessionStore()
 
 async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
     browser = await playwright.chromium.launch(
-        headless=True,
+        headless=False,
         args=BROWSER_ARGS,
         channel="chrome",
     )
@@ -36,7 +37,7 @@ async def _create_stealth_context(playwright, storage_state_path: Optional[str] 
     context = await browser.new_context(**context_kwargs)
 
     page = await context.new_page()
-    await stealth_async(page)
+    await stealth.apply_stealth_async(page)
 
     return browser, context, page
 

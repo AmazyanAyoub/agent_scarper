@@ -51,6 +51,7 @@ class SelectorValidator:
                             continue
                     await self._fill_and_submit(page, handle, keyword)
                     await self._await_results(page)
+                    await self._scroll_results(page)
                     html = await page.content()
                     await context.storage_state(path=storage_state_path)
                     logger.success("Selector '%s' validated and submitted successfully", selector)
@@ -92,6 +93,12 @@ class SelectorValidator:
             unique.append(selector)
         return unique
     
+    async def _scroll_results(self, page: Page, step_px: int = 1200, repeats: int = 4, pause_ms: int = 800) -> None:
+        for _ in range(repeats):
+            await page.mouse.wheel(0, step_px)          # scroll down
+            await page.wait_for_timeout(pause_ms)       # give content time to render
+        await page.wait_for_timeout(pause_ms)           # final settle
+
 
     async def _get_valid_handle(self, page: Page, selector: str) -> bool:
         try:

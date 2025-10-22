@@ -7,7 +7,7 @@ from typing import Iterable, Optional, List, Dict, Any
 
 from bs4 import BeautifulSoup, Tag
 
-RAW_HTML_PATH = Path("debug/cards_raw.html")
+RAW_HTML_PATH = Path("../../app/data/debug/www.ebay.com_page_input#gh-ac.html")
 OUTPUT_PATH = Path("debug/cards_enriched.json")
 
 PRICE_PATTERN = re.compile(r"(?i)([\$\u20ac\u00a3]\s?)?\d[\d,]*(\.\d{2})?(?:\s?(usd|eur|gbp|dh))?")
