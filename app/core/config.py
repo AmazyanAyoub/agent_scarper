@@ -202,3 +202,20 @@ CARD_DETAIL_HREF_PATTERNS = (
     "sku=",            # generic SKU links
     "item="
 )
+
+
+DETAIL_HREF_PATTERNS = (
+    "/itm/", "/dp/", "/product/", "/listing/", "sku=", "item="
+)
+
+PRICE_REGEX = re.compile(r"(?i)([$€£₦]\s?)?\d[\d,]*(\.\d{2})?")
+
+CANDIDATE_TAGS = {"article", "li", "div", "section"}
+
+MIN_SIGNATURE_HITS = 6
+TOP_SIGNATURES = 6
+
+
+MIN_SIBLINGS = 3
+TOP_K = 3
+MAX_NODES = 50

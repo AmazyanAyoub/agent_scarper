@@ -17,8 +17,9 @@ from app.services.search_intent import build_search_intent
 from app.services.selector_store import SelectorStore
 from app.services.selector_validator import SelectorValidator
 from app.services.session_store import SessionStore
-from app.services.html_filtering import extract_cards  # <- heuristic extractor
-from app.services.card_enricher import card_enricher
+# from app.services.html_filtering import extract_cards  # <- heuristic extractor
+# from app.services.card_enricher import card_enricher
+from app.services.card_selector import extract_cards_from_html
 
 DEFAULT_TEST_KEYWORD = "test"
 
@@ -128,12 +129,16 @@ class EcommerceStrategy:
 
             return
 
-        cards = extract_cards(ctx.result_html, limit=10)
-        ctx.products = cards or []
+        extraction = extract_cards_from_html(
+            ctx.result_html,
+            base_url=ctx.url,
+            limit=10,
+        )
+        ctx.products = extraction.cards or []
 
         if ctx.products:
             ctx.output_path = self._save_cards(domain, ctx.products)
-            await self._enrich_cards(ctx.products, ctx.url, domain)
+            # await self._enrich_cards(ctx.products, ctx.url, domain)
         else:
             ctx.output_path = None
 
@@ -146,20 +151,20 @@ class EcommerceStrategy:
         logger.info("Persisted %d cards to %s", len(cards), file_path)
         return str(file_path)
 
-    async def _enrich_cards(self, cards: list[Cards], base_url: str, domain: str) -> None:
-        enriched: list[Cards] = []
-        for card in cards:
-            enriched_card = await card_enricher.enrich(card, base_url)
-            enriched.append(enriched_card)
+    # async def _enrich_cards(self, cards: list[Cards], base_url: str, domain: str) -> None:
+    #     enriched: list[Cards] = []
+    #     for card in cards:
+    #         enriched_card = await card_enricher.enrich(card, base_url)
+    #         enriched.append(enriched_card)
 
-        output_dir = Path("app/data/products")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        file_path = output_dir / f"{domain}_enriched.json"
-        file_path.write_text(
-            json.dumps([card.model_dump() for card in enriched], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        logger.info("Enriched %d cards to %s", len(enriched), file_path)
+    #     output_dir = Path("app/data/products")
+    #     output_dir.mkdir(parents=True, exist_ok=True)
+    #     file_path = output_dir / f"{domain}_enriched.json"
+    #     file_path.write_text(
+    #         json.dumps([card.model_dump() for card in enriched], ensure_ascii=False, indent=2),
+    #         encoding="utf-8",
+    #     )
+    #     logger.info("Enriched %d cards to %s", len(enriched), file_path)
 
 
 async def run_ecommerce_flow(url: str, instruction: str) -> EcommerceContext:

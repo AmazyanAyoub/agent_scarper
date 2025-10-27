@@ -5,8 +5,8 @@ from app.strategies.ecommerce import run_ecommerce_flow
 
 
 async def main():
-    url = "https://www.jumia.ma"
-    instruction = "I want the iphone 15 with 256go new or old"
+    url = "https://www.ebay.com"
+    instruction = "look for iphones 15"
 
     site_type = await asyncio.to_thread(build_hybrid_classifier, url)
     print(f"classifier -> {site_type}")

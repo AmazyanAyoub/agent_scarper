@@ -1,199 +1,416 @@
-"""Heuristic product-card extractor for rendered search-result HTML."""
-
 from __future__ import annotations
 
 from collections import Counter
-import re
-from typing import Iterable, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from bs4 import BeautifulSoup, Tag
-from pydantic import ValidationError
+from langchain.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
+from pydantic import BaseModel, Field
 
-from app.models.cards import Cards
 from app.core.config import (
-    CARD_PRICE_PATTERN,
-    CARD_STOP_WORDS,
-    CARD_TITLE_SELECTORS,
-    CARD_PRICE_SELECTORS,
-    CARD_SUBTITLE_SELECTORS,
-    CARD_SHIPPING_SELECTORS,
-    CARD_LOCATION_SELECTORS,
-    CARD_SELLER_SELECTORS,
-    CARD_HIGHLIGHT_SELECTORS,
-    CARD_MIN_SELECTOR_HITS,
+    CANDIDATE_TAGS,
     CARD_DETAIL_HREF_PATTERNS,
+    CARD_HIGHLIGHT_SELECTORS,
+    CARD_LOCATION_SELECTORS,
+    CARD_MIN_SELECTOR_HITS,
+    CARD_PRICE_PATTERN,
+    CARD_PRICE_SELECTORS,
+    CARD_SELLER_SELECTORS,
+    CARD_SHIPPING_SELECTORS,
+    CARD_STOP_WORDS,
+    CARD_SUBTITLE_SELECTORS,
+    CARD_TITLE_SELECTORS,
+    DETAIL_HREF_PATTERNS,
+    MIN_SIGNATURE_HITS,
+    TOP_SIGNATURES,
 )
+from app.models.cards import Cards
+from app.services.llm_engine import get_llm
+
+DEFAULT_REQUIRED_FIELDS: Sequence[str] = ("title", "url")
+DEFAULT_MAX_SELECTORS = 6
+DEFAULT_CARD_LIMIT = 32
 
 
-def _node_has_price(node: Tag) -> bool:
-    text = node.get_text(" ", strip=True).lower()
-    if any(stop in text for stop in CARD_STOP_WORDS):
-        return False
-    return bool(CARD_PRICE_PATTERN.search(text))
+class SelectorScore(BaseModel):
+    selector: str = Field(..., description="CSS selector for the candidate wrapper")
+    score: int = Field(..., ge=0, le=5, description="Confidence rating (0-5)")
+    reason: str = Field(..., description="Rationale for the score")
 
 
-def _node_has_anchor(node: Tag) -> bool:
-    for a in node.find_all("a", href=True):
-        href = a["href"]
-        if any(pat in href for pat in CARD_DETAIL_HREF_PATTERNS):
-            return True
-    return False
+class SelectorRanking(BaseModel):
+    candidates: List[SelectorScore]
 
 
-def _css_path(node: Tag) -> str:
-    parts: list[str] = []
-    cur: Optional[Tag] = node
-    while cur and cur.name not in ("html", "body"):
-        classes = "." + ".".join(sorted(c for c in cur.get("class", []) if c))
-        parts.append(f"{cur.name}{classes}" if classes != "." else cur.name)
-        cur = cur.parent if isinstance(cur.parent, Tag) else None
-    return " > ".join(reversed(parts))
+@dataclass
+class SelectorReport:
+    selector: str
+    raw_count: int
+    sample_cards: List[Cards]
 
 
-def _discover_card_selector(html: str, min_hits: int = 6) -> Optional[str]:
-    min_hits = max(min_hits, CARD_MIN_SELECTOR_HITS)
+def gather_wrapper_candidates(html: str, base_url: str | None = None) -> tuple[
+    List[tuple[tuple[str, Tuple[str, ...]], Tag, bool, bool]],
+    Counter[tuple[str, Tuple[str, ...]]],
+]:
     soup = BeautifulSoup(html, "lxml")
-    candidates = [
-        node
-        for node in soup.find_all(["li", "article", "div", "section"])
-        if _node_has_price(node) and _node_has_anchor(node)
-    ]
-    freq = Counter(_css_path(node) for node in candidates)
-    for path, hits in freq.most_common():
-        if hits < min_hits:
+    counter: Counter[tuple[str, Tuple[str, ...]]] = Counter()
+    candidates: List[tuple[tuple[str, Tuple[str, ...]], Tag, bool, bool]] = []
+
+    href_patterns = CARD_DETAIL_HREF_PATTERNS or DETAIL_HREF_PATTERNS
+
+    for node in soup.find_all(CANDIDATE_TAGS):
+        classes = tuple(sorted(node.get("class", [])))
+        signature = (node.name, classes)
+
+        text = node.get_text(" ", strip=True)
+        has_price = bool(CARD_PRICE_PATTERN.search(text))
+
+        has_link = False
+        any_anchor = False
+        for anchor in node.find_all("a", href=True):
+            href = anchor.get("href")
+            if not href:
+                continue
+            any_anchor = True
+            normalized = _normalize_url(href, base_url) if base_url else href
+            if any(pattern in normalized for pattern in href_patterns):
+                has_link = True
+                break
+
+        if not has_link and not any_anchor:
             continue
-        try:
-            nodes = soup.select(path)
-        except Exception:
+        if not has_link and any_anchor:
+            has_link = True
+
+        candidates.append((signature, node, has_price, has_link))
+        counter[signature] += 1
+
+    return candidates, counter
+
+
+def shortlist_signatures(
+    candidates: Iterable[tuple[tuple[str, Tuple[str, ...]], Tag, bool, bool]],
+    counter: Counter[tuple[str, Tuple[str, ...]]],
+    *,
+    min_hits: int | None = None,
+    top_n: int | None = None,
+) -> List[Dict[str, Any]]:
+    min_hits = min_hits or min(CARD_MIN_SELECTOR_HITS, MIN_SIGNATURE_HITS)
+    top_n = top_n or TOP_SIGNATURES
+
+    grouped: Dict[tuple[str, Tuple[str, ...]], Dict[str, Any]] = {}
+
+    for signature, node, has_price, _ in candidates:
+        frequency = counter[signature]
+        if frequency < min_hits:
             continue
-        if nodes and _node_has_price(nodes[0]) and _node_has_anchor(nodes[0]):
-            return path
-    return None
+
+        entry = grouped.setdefault(
+            signature,
+            {
+                "signature": signature,
+                "frequency": frequency,
+                "has_price_hits": 0,
+                "samples": [],
+            },
+        )
+        if has_price:
+            entry["has_price_hits"] += 1
+        if len(entry["samples"]) < 3:
+            entry["samples"].append(node)
+
+    scored: List[Dict[str, Any]] = []
+    for signature, data in grouped.items():
+        score = data["frequency"] + data["has_price_hits"]
+        data["score"] = score
+        first_node = data["samples"][0] if data["samples"] else None
+        data["preview_html"] = first_node.prettify() if first_node else ""
+        scored.append(data)
+
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    return scored[:top_n]
 
 
-def _pick_text(node: Tag, selectors: Iterable[str], min_len: int = 4) -> str:
-    for sel in selectors:
-        for el in node.select(sel):
-            text = el.get_text(" ", strip=True)
-            if len(text) >= min_len and not any(stop in text.lower() for stop in CARD_STOP_WORDS):
-                return text
-    return ""
+def signature_to_css(signature: tuple[str, Tuple[str, ...]]) -> str:
+    tag, class_tuple = signature
+    class_part = "".join(f".{klass}" for klass in class_tuple if klass)
+    return f"{tag}{class_part}"
 
 
-def _pick_url(node: Tag, title: str) -> str:
-    title_lower = title.lower()
-    for a in node.select("a[href*='/itm/']"):
-        href = a["href"].strip()
-        link_text = a.get_text(" ", strip=True).lower()
-        if href and not href.startswith("javascript:") and title_lower[:32] in link_text:
-            return href
-    for a in node.select("a[href*='/itm/']"):
-        href = a["href"].strip()
-        if href and not href.startswith("javascript:"):
-            return href
-    for a in node.find_all("a", href=True):
-        href = a["href"].strip()
-        if href and not href.startswith("javascript:"):
-            return href
-    return ""
-
-
-def _pick_image(node: Tag) -> str:
-    img = node.find("img")
-    if not img:
-        return ""
-    for key in ("data-src", "data-image-src", "srcset", "src"):
-        val = img.get(key)
-        if val:
-            if key == "srcset":
-                return val.split()[0]
-            return val
-    return ""
-
-
-def _collect_highlights(node: Tag, selectors: Iterable[str]) -> list[str]:
-    highlights: list[str] = []
-    for sel in selectors:
-        for el in node.select(sel):
-            text = el.get_text(" ", strip=True)
-            if text and len(text) > 3 and text.lower() not in CARD_STOP_WORDS:
-                highlights.append(text)
-    return list(dict.fromkeys(highlights))
-
-
-def _parse_price_value(text: str) -> Optional[float]:
-    match = CARD_PRICE_PATTERN.search(text or "")
-    if not match:
-        return None
-    numeric_part = re.sub(r"[^\d.]", "", match.group(0))
-    try:
-        return float(numeric_part) if numeric_part else None
-    except ValueError:
-        return None
-
-
-def extract_cards(html: str, limit: int = 50) -> list[Cards]:
-    soup = BeautifulSoup(html, "lxml")
-    selector = _discover_card_selector(html)
-    print(f"[extract_cards] selector -> {selector}")
-    if not selector:
+def rank_signatures_with_llm(signature_infos: Sequence[Dict[str, Any]]) -> List[SelectorScore]:
+    if not signature_infos:
         return []
 
-    cards: list[Cards] = []
-    for node in soup.select(selector):
-        title = _pick_text(node, CARD_TITLE_SELECTORS, min_len=6)
-        url = _pick_url(node, title)
-        if not title or not url or "/sch/" in url.lower():
+    parser = PydanticOutputParser(pydantic_object=SelectorRanking)
+    prompt = PromptTemplate.from_template(
+        (
+            "You are ranking HTML fragments that may be product cards.\n\n"
+            "Return JSON with a single key `candidates`, whose value is an array of\n"
+            "{\"selector\": string, \"score\": 0-5, \"reason\": string}.\n\n"
+            "Fragments:\n{fragments}"
+        )
+    )
+
+    fragments = "\n\n".join(
+        (
+            "---\n"
+            f"Index: {idx}\n"
+            f"Tag/Classes: {info['signature']}\n"
+            "HTML snippet:\n"
+            f"{info['preview_html'][:1200]}"
+        )
+        for idx, info in enumerate(signature_infos, start=1)
+    )
+
+    llm = get_llm()
+    chain = prompt | llm | parser
+    try:
+        ranking = chain.invoke({"fragments": fragments})
+    except Exception:
+        return []
+
+    return ranking.candidates
+
+
+def discover_card_selectors(
+    html: str,
+    *,
+    base_url: str | None = None,
+    use_llm: bool = False,
+    max_selectors: int = DEFAULT_MAX_SELECTORS,
+) -> List[str]:
+    candidates, counter = gather_wrapper_candidates(html, base_url=base_url)
+    shortlist = shortlist_signatures(candidates, counter)
+
+    selectors = [signature_to_css(item["signature"]) for item in shortlist]
+    selectors = selectors[:max_selectors]
+
+    if use_llm and shortlist:
+        llm_rankings = rank_signatures_with_llm(shortlist)
+        ordered: List[str] = []
+        seen: set[str] = set()
+        for candidate in llm_rankings:
+            selector = candidate.selector.strip()
+            if selector and selector in selectors and selector not in seen:
+                ordered.append(selector)
+                seen.add(selector)
+        ordered.extend(sel for sel in selectors if sel not in seen)
+        selectors = ordered[:max_selectors]
+
+    return selectors
+
+
+def extract_cards(
+    html: str,
+    *,
+    base_url: str | None = None,
+    limit: int = DEFAULT_CARD_LIMIT,
+    use_llm: bool = False,
+    required_fields: Iterable[str] | None = None,
+    max_selectors: int = DEFAULT_MAX_SELECTORS,
+    include_report: bool = False,
+) -> List[Cards] | tuple[List[Cards], List[SelectorReport]]:
+    selectors = discover_card_selectors(
+        html,
+        base_url=base_url,
+        use_llm=use_llm,
+        max_selectors=max_selectors,
+    )
+
+    soup = BeautifulSoup(html, "lxml")
+    required = tuple(required_fields or DEFAULT_REQUIRED_FIELDS)
+    seen: set[str] = set()
+    cards: List[Cards] = []
+    reports: List[SelectorReport] = []
+
+    for selector in selectors:
+        nodes = soup.select(selector)
+        if not nodes:
             continue
 
-        # text_blob = node.get_text(" ", strip=True).lower().replace(" ", "")
-        # if "sponsored" in text_blob or "derosnops" in text_blob:
-        #     continue
+        selector_cards: List[Cards] = []
+        for node in nodes:
+            record = _extract_card_from_node(node, base_url=base_url)
+            if not _meets_required(record, required):
+                continue
 
-        price_text = _pick_text(node, CARD_PRICE_SELECTORS, min_len=2)
-        price_value = _parse_price_value(price_text)
-        subtitle = _pick_text(node, CARD_SUBTITLE_SELECTORS, min_len=4)
-        shipping = _pick_text(node, CARD_SHIPPING_SELECTORS, min_len=4)
-        location = _pick_text(node, CARD_LOCATION_SELECTORS, min_len=4)
-        seller = _pick_text(node, CARD_SELLER_SELECTORS, min_len=4)
-        highlights = _collect_highlights(node, CARD_HIGHLIGHT_SELECTORS)
-        image_url = _pick_image(node)
+            dedupe_key = record.get("url") or record.get("title")
+            if not dedupe_key or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
 
-        specs = {
-            "raw_html": node.prettify(),
-            "shipping": shipping,
-            "highlights": highlights,
-        }
-        if subtitle:
-            specs["subtitle"] = subtitle
-        if location:
-            specs["location"] = location
-        if seller:
-            specs["seller"] = seller
+            card_model = Cards(**record)
+            selector_cards.append(card_model)
+            cards.append(card_model)
 
-        payload = {
-            "title": title,
-            "name": title,
-            "url": url,
-            "image_url": image_url,
-            "description": subtitle or "",
-            "price": price_text,
-            "specs": specs,
-            "rating": None,
-            "reviews_count": None,
-            "availability": None,
-            "brand": None,
-            "model": None,
-            "category": None,
-        }
+            if len(cards) >= limit:
+                break
 
-        try:
-            card = Cards(**payload)
-            cards.append(card)
-        except ValidationError:
-            continue
+        reports.append(
+            SelectorReport(
+                selector=selector,
+                raw_count=len(selector_cards),
+                sample_cards=selector_cards[: min(len(selector_cards), 5)],
+            )
+        )
 
         if len(cards) >= limit:
             break
 
-    return cards
+    return (cards, reports) if include_report else cards
+
+
+def _extract_card_from_node(node: Tag, base_url: str | None = None) -> Dict[str, Any]:
+    data: Dict[str, Any] = {}
+
+    link = _pick_link(node, base_url=base_url)
+    if link:
+        data["url"] = link
+
+    title = _pick_text(node, CARD_TITLE_SELECTORS)
+    if not title:
+        title = link[0:80] if link else ""
+    data["title"] = title or None
+    data["name"] = title or None
+
+    price_text = _pick_text(node, CARD_PRICE_SELECTORS)
+    if not price_text:
+        price_text = _match_price(node)
+    data["price"] = price_text or None
+
+    subtitle = _pick_text(node, CARD_SUBTITLE_SELECTORS)
+    data["description"] = subtitle or None
+
+    shipping = _pick_text(node, CARD_SHIPPING_SELECTORS)
+    if shipping:
+        data.setdefault("specs", {})["shipping"] = shipping
+
+    location = _pick_text(node, CARD_LOCATION_SELECTORS)
+    data["location"] = location or None
+
+    seller = _pick_text(node, CARD_SELLER_SELECTORS)
+    data["seller"] = seller or None
+
+    highlights = _collect_highlights(node, CARD_HIGHLIGHT_SELECTORS)
+    if highlights:
+        specs = dict(data.get("specs") or {})
+        specs["highlights"] = highlights
+        data["specs"] = specs
+
+    image_url = _pick_image(node, base_url=base_url)
+    data["image_url"] = image_url or None
+
+    rating, reviews = _pick_rating(node)
+    data["rating"] = rating
+    data["reviews_count"] = reviews
+
+    return {key: value for key, value in data.items() if value not in (None, "", {})}
+
+
+def _normalize_url(href: str, base_url: str) -> str:
+    from urllib.parse import urljoin as _urljoin
+
+    return _urljoin(base_url, href)
+
+
+def _pick_link(node: Tag, base_url: str | None = None) -> Optional[str]:
+    candidates = node.select("a[href]")
+    preferred_patterns = CARD_DETAIL_HREF_PATTERNS or DETAIL_HREF_PATTERNS
+
+    for anchor in candidates:
+        href = anchor.get("href")
+        if not href:
+            continue
+        url = _normalize_url(href, base_url) if base_url else href
+        if any(pattern in url for pattern in preferred_patterns):
+            return url
+
+    for anchor in candidates:
+        href = anchor.get("href")
+        if href:
+            return _normalize_url(href, base_url) if base_url else href
+    return None
+
+
+def _pick_text(node: Tag, selectors: Sequence[str], min_len: int = 4) -> str:
+    for selector in selectors:
+        element = node.select_one(selector)
+        if not element:
+            continue
+        text = element.get_text(" ", strip=True)
+        if len(text) >= min_len and text.lower() not in CARD_STOP_WORDS:
+            return text
+    return ""
+
+
+def _match_price(node: Tag) -> str:
+    text = node.get_text(" ", strip=True)
+    match = CARD_PRICE_PATTERN.search(text or "")
+    return match.group(0) if match else ""
+
+
+def _collect_highlights(node: Tag, selectors: Sequence[str]) -> List[str]:
+    results: List[str] = []
+    for selector in selectors:
+        for element in node.select(selector):
+            text = element.get_text(" ", strip=True)
+            if text and text.lower() not in CARD_STOP_WORDS:
+                results.append(text)
+    seen: Dict[str, None] = {}
+    for item in results:
+        if item not in seen:
+            seen[item] = None
+    return list(seen.keys())
+
+
+def _pick_image(node: Tag, base_url: str | None = None) -> Optional[str]:
+    image = node.select_one("img[src], img[data-src], img[data-image-src], img[data-lazy-src], img[data-original]")
+    if not image:
+        return None
+    for attr in ("data-src", "data-image-src", "data-original", "srcset", "src"):
+        value = image.get(attr)
+        if not value:
+            continue
+        if attr == "srcset":
+            value = value.split()[0]
+        return _normalize_url(value, base_url) if base_url else value
+    return None
+
+
+def _pick_rating(node: Tag) -> tuple[Optional[float], Optional[int]]:
+    rating_value: Optional[float] = None
+    reviews_count: Optional[int] = None
+
+    rating_candidate = node.select_one("[aria-label*='out of 5'], [data-star-rating], [class*='rating']")
+    if rating_candidate:
+        text = rating_candidate.get_text(" ", strip=True)
+        parts = text.split()
+        for part in parts:
+            try:
+                rating_value = float(part)
+                break
+            except ValueError:
+                continue
+
+    review_candidate = node.find(string=lambda value: isinstance(value, str) and "review" in value.lower())
+    if review_candidate:
+        digits = "".join(ch for ch in review_candidate if ch.isdigit() or ch == ",")
+        if digits:
+            try:
+                reviews_count = int(digits.replace(",", ""))
+            except ValueError:
+                reviews_count = None
+
+    return rating_value, reviews_count
+
+
+def _meets_required(data: Dict[str, Any], required: Sequence[str]) -> bool:
+    for field in required:
+        value = data.get(field)
+        if value:
+            continue
+        return False
+    return True
