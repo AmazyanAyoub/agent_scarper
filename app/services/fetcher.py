@@ -1,7 +1,10 @@
 # fetcher.py
 
 from playwright.async_api import async_playwright
-from loguru import logger
+
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 from playwright_stealth import Stealth
 from pathlib import Path
 import traceback, asyncio

@@ -7,7 +7,9 @@ from typing import List
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 
 from app.core.config import SEARCH_ATTRS, SEARCH_TERMS
 from app.prompts.prompts import SEARCH_SELECTORS_PROMPT

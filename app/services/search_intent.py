@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import List, Literal
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 from pydantic import BaseModel, Field
 from app.prompts.prompts import SEARCH_INTENT_PROMPT
 from app.services.llm_engine import get_llm

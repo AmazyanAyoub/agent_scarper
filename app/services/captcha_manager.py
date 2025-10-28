@@ -5,7 +5,9 @@ from enum import Enum
 # from pathlib import Path
 from typing import Sequence
 
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 
 # from app.services.llm_engine import get_llm
 # from app.prompts.prompts import CAPTCHA_DECISION_PROMPT

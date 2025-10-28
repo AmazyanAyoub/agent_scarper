@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 
 from app.models.cards import Cards
 from app.services.fetcher import fetch_html
@@ -144,21 +146,6 @@ class EcommerceStrategy:
         #     await self._enrich_cards(ctx.products, ctx.url, domain)
         else:
             ctx.output_path = None
-
-    # async def _enrich_cards(self, cards: list[Cards], base_url: str, domain: str) -> None:
-    #     enriched: list[Cards] = []
-    #     for card in cards:
-    #         enriched_card = await card_enricher.enrich(card, base_url)
-    #         enriched.append(enriched_card)
-
-    #     output_dir = Path("app/data/products")
-    #     output_dir.mkdir(parents=True, exist_ok=True)
-    #     file_path = output_dir / f"{domain}_enriched.json"
-    #     file_path.write_text(
-    #         json.dumps([card.model_dump() for card in enriched], ensure_ascii=False, indent=2),
-    #         encoding="utf-8",
-    #     )
-    #     logger.info("Enriched %d cards to %s", len(enriched), file_path)
 
 
 async def run_ecommerce_flow(url: str, instruction: str) -> EcommerceContext:

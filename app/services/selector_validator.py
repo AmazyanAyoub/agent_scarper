@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 from playwright.async_api import TimeoutError, async_playwright, Page
 
 from app.services.fetcher import _create_stealth_context

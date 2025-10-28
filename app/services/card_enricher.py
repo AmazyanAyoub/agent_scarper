@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
-from loguru import logger
+
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 
 from app.models.cards import Cards
 from app.services.fetcher import fetch_html
@@ -78,5 +83,20 @@ class CardEnricher:
 
         updates["url"] = url  # store absolute URL
         return updates
+    
+    async def _enrich_cards(self, cards: list[Cards], base_url: str, domain: str) -> None:
+        enriched: list[Cards] = []
+        for card in cards:
+            enriched_card = await self.enrich(card, base_url)
+            enriched.append(enriched_card)
+
+        output_dir = Path("app/data/products")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        file_path = output_dir / f"{domain}_enriched.json"
+        file_path.write_text(
+            json.dumps([card.model_dump() for card in enriched], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("Enriched %d cards to %s", len(enriched), file_path)
 
 card_enricher = CardEnricher()

@@ -2,11 +2,13 @@
 
 from dotenv import load_dotenv
 import os, re
-from loguru import logger
 from pathlib import Path
 from typing import Tuple
 # Load .env file
 load_dotenv()
+
+from app.core.logger import get_logger
+logger = get_logger(__name__)
 
 # API Keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")

@@ -1,5 +1,7 @@
 from app.models.cards import Cards
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 from pathlib import Path
 import json
 

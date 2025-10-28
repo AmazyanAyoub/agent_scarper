@@ -1,6 +1,8 @@
 # llm_engine.py
 
-from loguru import logger
+from app.core.logger import get_logger
+logger = get_logger(__name__)
+
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
