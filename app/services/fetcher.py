@@ -5,7 +5,7 @@ from playwright.async_api import async_playwright
 from app.core.logger import get_logger
 logger = get_logger(__name__)
 
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth
 from pathlib import Path
 import traceback, asyncio
 
@@ -13,18 +13,16 @@ import traceback, asyncio
 from typing import Optional
 from app.services.captcha_manager import CaptchaManager, CaptchaDetected, CaptchaDecision
 from app.services.session_store import SessionStore
-try:
-    import nodriver as uc  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    uc = None
+import nodriver as uc
 from app.core.config import BROWSER_ARGS, VIEWPORT, USER_AGENT
 
+stealth = Stealth()
 captcha_manager = CaptchaManager()
 session_store = SessionStore()
 
 async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
     browser = await playwright.chromium.launch(
-        headless=False,
+        headless=True,
         args=BROWSER_ARGS,
         channel="chrome",
     )
@@ -42,10 +40,7 @@ async def _create_stealth_context(playwright, storage_state_path: Optional[str] 
     context = await browser.new_context(**context_kwargs)
 
     page = await context.new_page()
-    try:
-        await stealth_async(page)
-    except Exception:
-        logger.warning("playwright_stealth failed to apply; continuing without stealth.")
+    await stealth.apply_stealth_async(page)
 
     return browser, context, page
 
@@ -61,10 +56,6 @@ async def wait_until_done_or_timeout(seconds: int):
 
 async def _manual_solve(url: str, wait: int) -> str:
     """Open a manual session, capture storage_state to disk, and return its path."""
-    if uc is None:
-        logger.warning("nodriver not available; skipping manual solve for %s.", url)
-        return ""
-
     logger.warning(
         "Opening manual solve window for %s. Complete the captcha in the browser before the timeout.",
         url,

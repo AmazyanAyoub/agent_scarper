@@ -5,7 +5,7 @@ logger = get_logger(__name__)
 from pathlib import Path
 import json
 
-def save_cards(self, domain: str, cards: list[Cards]) -> str:
+def save_cards(domain: str, cards: list[Cards]) -> str:
     output_dir = Path("app/data/products")
     output_dir.mkdir(parents=True, exist_ok=True)
     file_path = output_dir / f"{domain}.json"
