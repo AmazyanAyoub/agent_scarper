@@ -1,26 +1,38 @@
-# main.py
-import typer
-from app.pipeline.graph import build_scraper_graph
-from app.services.exporter import export_results
+import asyncio
 
-app = typer.Typer()
+from app.core.logger import get_logger, setup_logging
+from app.pipeline.graph import build_agent_graph
 
-@app.command()
-def run(
-    url: str = typer.Option(..., "--url", help="The URL to scrape"),
-    instruction: str = typer.Option(..., "--instruction", help="Instruction for the scraper"),
-    # use_playwright: bool = typer.Option(False, "--use-playwright", help="Use Playwright instead of httpx"),
-):
-    graph = build_scraper_graph()
+logger = get_logger(__name__)
 
-    # Input state for LangGraph
+
+def run_agent(url: str, instruction: str, log_level: str = "INFO") -> None:
+    setup_logging(log_level=log_level.upper())
+
+    graph = build_agent_graph()
     state = {
         "url": url,
         "instruction": instruction,
+        "errors": [],
+        "metadata": {},
     }
 
-    # Run graph
-    result = graph.invoke(state)
+    logger.info("Starting agent run for %s", url)
+    result = asyncio.run(graph.ainvoke(state))
+
+    site_type = result.get("site_type")
+    cards = result.get("cards") or []
+    logger.info("Agent finished with site_type=%s, cards=%d", site_type, len(cards))
+
+    output_path = (result.get("metadata") or {}).get("output_path")
+    if output_path:
+        logger.info("Results saved to %s", output_path)
+
+    for err in result.get("errors", []):
+        logger.error("Error: %s", err)
+
 
 if __name__ == "__main__":
-    app()
+    URL = "https://www.ebay.com"
+    INSTRUCTION = "Find iPhone 15"
+    run_agent(URL, INSTRUCTION, log_level="INFO")

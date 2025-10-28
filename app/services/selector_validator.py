@@ -56,7 +56,7 @@ class SelectorValidator:
                     await self._scroll_results(page)
                     html = await page.content()
                     await context.storage_state(path=storage_state_path)
-                    logger.success("Selector '%s' validated and submitted successfully", selector)
+                    logger.info("Selector '%s' validated and submitted successfully", selector)
                     return selector, html
                 
             finally:
