@@ -8,15 +8,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from bs4 import BeautifulSoup, Tag
-from langchain.output_parsers import PydanticOutputParser
-from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
 
 from app.models.cards import Cards
-from app.services.llm_engine import get_llm
-
+from app.services.chains.builders import build_card_mapping_chain
+from app.services.chains.models import CardMapping, CardMappingResult
 from app.core.config import PRICE_REGEX, MIN_SIBLINGS, MAX_NODES, TOP_K
-from app.prompts.prompts import CARD_PROMPT
 
 
 @dataclass
@@ -25,17 +21,6 @@ class CardSelectorCandidate:
     count: int
     avg_score: float
     sample_html: str
-
-
-class CardMapping(BaseModel):
-    title: str | None = Field(None, description="Relative selector(s) for title")
-    price: str | None = Field(None, description="Relative selector(s) for price")
-    image: str | None = Field(None, description="Relative selector(s) for image")
-    link: str | None = Field(None, description="Relative selector(s) for link")
-
-
-class CardMappingResult(BaseModel):
-    candidates: List[CardMapping]
 
 
 @dataclass
@@ -147,15 +132,8 @@ def discover_card_selectors(
     candidates.sort(key=lambda c: (c.avg_score, c.count), reverse=True)
     return candidates[:top_k]
 
-
-def _mapping_chain():
-    parser = PydanticOutputParser(pydantic_object=CardMappingResult)
-    prompt = PromptTemplate.from_template(CARD_PROMPT)
-    return prompt | get_llm() | parser
-
-
 def infer_field_mapping(card_html: str) -> CardMapping:
-    chain = _mapping_chain()
+    chain = build_card_mapping_chain()
     result = chain.invoke({"card_html": card_html})
 
     if isinstance(result, CardMappingResult) and result.candidates:

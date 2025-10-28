@@ -1,26 +1,13 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Literal
+from typing import List
+
 from app.core.logger import get_logger
+from app.services.chains.builders import build_search_intent_chain
+from app.services.chains.models import SearchIntentSchema
+
 logger = get_logger(__name__)
-
-from pydantic import BaseModel, Field
-from app.prompts.prompts import SEARCH_INTENT_PROMPT
-from app.services.llm_engine import get_llm
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
-
-
-class SearchConditionModel(BaseModel):
-    name: str = Field(..., description="Machine-friendly condition name, e.g. price_max, brand")
-    value: str = Field(..., description="Human-readable value to apply")
-    apply_via: Literal["keyword", "filter"] = Field(
-        ...,
-        description="Whether to append to the search keyword or apply via UI filters",
-    )
-
-class SearchIntentSchema(BaseModel):
-    keyword: str = Field(default="udgu")
-    conditions: List[SearchConditionModel] = Field(default_factory=list)
 
 
 @dataclass
@@ -36,14 +23,11 @@ class SearchIntent:
 
 
 def build_search_intent(instruction: str) -> SearchIntent:
-    prompt = PromptTemplate.from_template(SEARCH_INTENT_PROMPT)
-    llm = get_llm()
-    parser = PydanticOutputParser(pydantic_object=SearchIntentSchema)
-    chain = prompt | llm | parser
+    chain = build_search_intent_chain()
 
     logger.info("Requesting search intent from LLM")
     try:
-        intent: SearchIntent = chain.invoke({"instruction": instruction.strip()})
+        intent: SearchIntentSchema = chain.invoke({"instruction": instruction.strip()})
     except Exception as exc:
         logger.error("Search intent parsing failed: %s", exc)
         return SearchIntent(keyword="udgu", conditions=[instruction.strip()])
@@ -58,7 +42,7 @@ def build_search_intent(instruction: str) -> SearchIntent:
     return SearchIntent(keyword=keyword, conditions=conditions)
     
 
-def build_search_keyword(self, instruction: str) -> str:
+def build_search_keyword(instruction: str) -> str:
     keyword_parts: list[str] = []
     search_intent = build_search_intent(instruction)
 

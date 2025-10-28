@@ -3,35 +3,11 @@ import os
 import asyncio
 from bs4 import BeautifulSoup
 from collections import defaultdict
-from langchain.output_parsers.openai_functions import PydanticAttrOutputFunctionsParser
-from langchain_core.utils.function_calling import convert_to_openai_function
-
-from app.services.llm_engine import get_llm
 from app.services.fetcher import fetch_html
-from app.prompts.prompts import EXPANDED_CLASSIFIER_PROMPT
 from app.core.config import DATA_FILE
+from app.services.chains.builders import build_site_classifier_chain
+from app.prompts.prompts import EXPANDED_CLASSIFIER_PROMPT
 
-from typing import Literal
-from pydantic import BaseModel
-
-class WebsiteTypeClassifier(BaseModel):
-    """Schema for website classification"""
-    site_type: Literal[
-        "ecommerce",
-        "blog",
-        "news_portal",
-        "wiki",
-        "forum",
-        "corporate",
-        "directory",
-        "government",
-        "education",
-        "developer_platform",
-        "social_media",
-        "saas_tool",
-        "portfolio_personal"
-    ]
-    """The type of the website."""
 
 def load_examples():
     if not os.path.exists(DATA_FILE):
@@ -80,16 +56,7 @@ def build_hybrid_classifier(url: str) -> str:
     examples_str = select_examples(data)
 
     # 4. Prepare classifier chain
-    classifier_function = convert_to_openai_function(WebsiteTypeClassifier)
-    llm = get_llm().bind(
-        functions=[classifier_function],
-        function_call={"name": "WebsiteTypeClassifier"}
-    )
-    parser = PydanticAttrOutputFunctionsParser(
-        pydantic_schema=WebsiteTypeClassifier,
-        attr_name="site_type"
-    )
-    classifier_chain = llm | parser
+    classifier_chain = build_site_classifier_chain()
 
     # 5. Build prompt
     prompt = EXPANDED_CLASSIFIER_PROMPT.format(
