@@ -13,13 +13,14 @@ from loguru import logger
 from app.models.cards import Cards
 from app.services.fetcher import fetch_html
 from app.services.parser import detect_search_selectors
-from app.services.search_intent import build_search_intent
+from app.services.search_intent import build_search_keyword
 from app.services.selector_store import SelectorStore
 from app.services.selector_validator import SelectorValidator
 from app.services.session_store import SessionStore
 # from app.services.html_filtering import extract_cards  # <- heuristic extractor
 # from app.services.card_enricher import card_enricher
 from app.services.card_selector import extract_cards_from_html
+from app.services.storage import save_cards
 
 DEFAULT_TEST_KEYWORD = "test"
 
@@ -53,15 +54,16 @@ class EcommerceStrategy:
     async def run(self, url: str, instruction: str) -> EcommerceContext:
         ctx = EcommerceContext(url=url, instruction=instruction)
 
-        ctx.search_keyword = self._build_search_keyword(instruction)
+        ctx.search_keyword = build_search_keyword(instruction)
         domain = self._domain(url)
 
         cached_selector = self.selector_store.get(domain)
-        if cached_selector:
-            logger.info("Using cached selector '%s' for %s", cached_selector, domain)
+        search_selector = cached_selector.get("search") if cached_selector else None
+        if search_selector:
+            logger.info("Using cached selector '%s' for %s", search_selector, domain)
             result = await self.validator.validate_and_submit(
                 url=url,
-                selectors=[cached_selector],
+                selectors=[search_selector],
                 keyword=ctx.search_keyword,
                 skip_validation=True,
             )
@@ -69,11 +71,11 @@ class EcommerceStrategy:
                 ctx.validated_selector, ctx.result_html = result
 
                 await self._populate_cards(ctx, domain)
-                ctx.selector_candidates = [cached_selector]
+                ctx.selector_candidates = [search_selector]
                 return ctx
             logger.warning(
                 "Cached selector '%s' failed; falling back to detection",
-                cached_selector,
+                search_selector,
             )
 
         ctx.html = await fetch_html(url, wait=5000, timeout=60000)
@@ -96,7 +98,7 @@ class EcommerceStrategy:
             ctx.validated_selector, ctx.result_html = result
             await self._populate_cards(ctx, domain)
             if ctx.validated_selector:
-                self.selector_store.set(domain, ctx.validated_selector)
+                self.selector_store.set(domain, {"search": ctx.validated_selector})
         else:
             logger.error("No valid search input selector found for %s", url)
 
@@ -105,51 +107,43 @@ class EcommerceStrategy:
     def _domain(self, url: str) -> str:
         return urlparse(url).netloc.lower()
 
-    def _build_search_keyword(self, instruction: str) -> str:
-        keyword_parts: list[str] = []
-        search_intent = build_search_intent(instruction)
-
-        if search_intent.keyword and search_intent.keyword.lower() != "udgu":
-            keyword_parts.append(search_intent.keyword.strip())
-        else:
-            logger.warning("No keyword found in instruction")
-
-        for condition in search_intent.conditions:
-            if isinstance(condition, str):
-                keyword_parts.append(condition.strip())
-                continue
-            if condition.apply_via == "keyword" and condition.value:
-                keyword_parts.append(condition.value.strip())
-
-        return " ".join(part for part in keyword_parts if part) or DEFAULT_TEST_KEYWORD
 
     async def _populate_cards(self, ctx: EcommerceContext, domain: str) -> None:
         if not ctx.result_html:
             logger.warning("No result HTML available to process for %s", ctx.url)
-
             return
+
+        cached = self.selector_store.get(domain) or {}
+        cached_card = cached.get("card") or {}
+        cached_selector = cached_card.get("selector")
+        cached_mapping = cached_card.get("mapping")
 
         extraction = extract_cards_from_html(
             ctx.result_html,
             base_url=ctx.url,
             limit=10,
+            cached_selector=cached_selector,
+            cached_mapping=cached_mapping,
+            reuse_cached=True,
         )
         ctx.products = extraction.cards or []
 
+        if extraction.selector and extraction.mapping:
+            self.selector_store.set(
+                domain,
+                {
+                    "card": {
+                        "selector": extraction.selector,
+                        "mapping": extraction.mapping.model_dump(),
+                    }
+                },
+            )
+
         if ctx.products:
-            ctx.output_path = self._save_cards(domain, ctx.products)
-            # await self._enrich_cards(ctx.products, ctx.url, domain)
+            ctx.output_path = save_cards(domain, ctx.products)
+        #     await self._enrich_cards(ctx.products, ctx.url, domain)
         else:
             ctx.output_path = None
-
-    def _save_cards(self, domain: str, cards: list[Cards]) -> str:
-        output_dir = Path("app/data/products")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        file_path = output_dir / f"{domain}.json"
-        payload = [card.model_dump() for card in cards]
-        file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        logger.info("Persisted %d cards to %s", len(cards), file_path)
-        return str(file_path)
 
     # async def _enrich_cards(self, cards: list[Cards], base_url: str, domain: str) -> None:
     #     enriched: list[Cards] = []

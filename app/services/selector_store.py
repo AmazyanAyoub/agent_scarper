@@ -21,11 +21,13 @@ class SelectorStore:
 
     def _dump(self, data: dict) -> None:
         self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        
+    def get(self, domain: str) -> dict:
+        return self._load().get(domain) or {}
 
-    def get(self, domain: str) -> Optional[str]:
-        return self._load().get(domain)
-
-    def set(self, domain: str, selector: str) -> None:
+    def set(self, domain: str, payload: dict) -> None:
         data = self._load()
-        data[domain] = selector
+        existing = data.get(domain) or {}
+        existing.update(payload)
+        data[domain] = existing
         self._dump(data)

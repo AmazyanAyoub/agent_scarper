@@ -1,6 +1,6 @@
 import asyncio
 
-from app.services.classify_website import build_hybrid_classifier
+from app.strategies.classify_website import build_hybrid_classifier
 from app.strategies.ecommerce import run_ecommerce_flow
 
 

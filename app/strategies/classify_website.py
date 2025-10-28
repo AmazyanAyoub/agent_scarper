@@ -6,12 +6,32 @@ from collections import defaultdict
 from langchain.output_parsers.openai_functions import PydanticAttrOutputFunctionsParser
 from langchain_core.utils.function_calling import convert_to_openai_function
 
-from app.models.WebsiteClassifier import WebsiteTypeClassifier
 from app.services.llm_engine import get_llm
 from app.services.fetcher import fetch_html
 from app.prompts.prompts import EXPANDED_CLASSIFIER_PROMPT
 from app.core.config import DATA_FILE
 
+from typing import Literal
+from pydantic import BaseModel
+
+class WebsiteTypeClassifier(BaseModel):
+    """Schema for website classification"""
+    site_type: Literal[
+        "ecommerce",
+        "blog",
+        "news_portal",
+        "wiki",
+        "forum",
+        "corporate",
+        "directory",
+        "government",
+        "education",
+        "developer_platform",
+        "social_media",
+        "saas_tool",
+        "portfolio_personal"
+    ]
+    """The type of the website."""
 
 def load_examples():
     if not os.path.exists(DATA_FILE):

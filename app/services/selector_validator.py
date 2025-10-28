@@ -22,9 +22,9 @@ class SelectorValidator:
         self._session_store = SessionStore()
 
     async def validate_and_submit(self, url: str, selectors: Iterable[str], keyword: str, skip_validation: bool) -> Optional[Tuple[str, str]]:
-        selector_list = self._deduplicate(selectors)
-        if not selector_list:
-            return None
+        # selector_list = self._deduplicate(selectors)
+        # if not selector_list:
+        #     return None
 
         storage_state_path = self._session_store.storage_state_path(url)
 
@@ -36,7 +36,7 @@ class SelectorValidator:
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=self.navigation_timeout)
 
-                for selector in selector_list:
+                for selector in selectors:
                     logger.info("Validating selector '%s'", selector)
                     if skip_validation:
                         try:
@@ -83,15 +83,15 @@ class SelectorValidator:
         except TimeoutError:
             logger.warning("Timed out waiting for network idle; continuing with current HTML")
 
-    def _deduplicate(self, selectors: Iterable[str]) -> list[str]:
-        seen = set()
-        unique = []
-        for selector in selectors:
-            if not selector or selector in seen:
-                continue
-            seen.add(selector)
-            unique.append(selector)
-        return unique
+    # def _deduplicate(self, selectors: Iterable[str]) -> list[str]:
+    #     seen = set()
+    #     unique = []
+    #     for selector in selectors:
+    #         if not selector or selector in seen:
+    #             continue
+    #         seen.add(selector)
+    #         unique.append(selector)
+    #     return unique
     
     async def _scroll_results(self, page: Page, step_px: int = 1200, repeats: int = 4, pause_ms: int = 800) -> None:
         for _ in range(repeats):

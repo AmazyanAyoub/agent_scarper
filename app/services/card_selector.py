@@ -16,6 +16,7 @@ from app.models.cards import Cards
 from app.services.llm_engine import get_llm
 
 from app.core.config import PRICE_REGEX, MIN_SIBLINGS, MAX_NODES, TOP_K
+from app.prompts.prompts import CARD_PROMPT
 
 
 @dataclass
@@ -49,18 +50,57 @@ def _class_key(node: Tag) -> Tuple[str, ...]:
     return tuple(sorted({cls.strip() for cls in classes if cls and cls.strip()}))
 
 
-def _score(node: Tag) -> float:
-    score = 0.0
-    if node.find("img"):
-        score += 3
-    if node.find("a", href=True):
-        score += 2
-    if PRICE_REGEX.search(node.get_text(" ", strip=True) or ""):
-        score += 4
-    token_count = len((node.get_text(" ", strip=True) or "").split())
-    if 3 <= token_count <= 80:
-        score += 1
-    return score
+def is_price_like(s: str) -> bool:
+    s = s.strip()
+    digits = re.sub(r"\D", "", s)
+    has_currency = bool(re.search(r'[€$£¥₺₹]|USD|EUR|GBP|JPY|INR|MAD|DH', s, re.I))
+    return (len(digits) >= 3) or has_currency
+
+def _score(el):
+    s = 0
+    text = el.get_text(" ", strip=True) or ""
+    words = len(text.split())
+
+    # --- 1. Image quality ---
+    imgs = el.find_all("img")
+    if imgs:
+        s += 2
+        # small boost if non-placeholder
+        src = imgs[0].get("data-src") or imgs[0].get("src") or ""
+        if src and not src.startswith("data:image"): 
+            s += 1
+
+    # --- 2. Link presence ---
+    if el.find("a", href=True):
+        s += 2
+
+    # --- 3. Price check ---
+    price_found = False
+    for m in PRICE_REGEX.finditer(text):
+        if is_price_like(m.group(0)):
+            s += 3
+            price_found = True
+            break
+    if not price_found:
+        s -= 1  # slight penalty
+
+    # --- 4. Title / text quality ---
+    if 3 <= words <= 50:
+        s += 2
+    elif words > 0:
+        s += 1
+
+    # --- 5. Text-to-image ratio (too little text = ad/banner) ---
+    ratio = words / max(1, len(imgs))
+    if 0.3 <= ratio <= 100:  # reasonable range
+        s += 1
+
+    # --- 6. Penalize repetitive / ad classes ---
+    bad_tokens = ["carousel", "banner", "ad", "promo", "snap", "sponsor", "track"]
+    classes = " ".join(el.get("class") or []).lower()
+    if any(b in classes for b in bad_tokens):
+        s -= 3
+    return s
 
 
 def discover_card_selectors(
@@ -110,13 +150,7 @@ def discover_card_selectors(
 
 def _mapping_chain():
     parser = PydanticOutputParser(pydantic_object=CardMappingResult)
-    prompt = PromptTemplate.from_template(
-        "You are an expert HTML analyzer for e-commerce product cards. "
-        "Given a product-card snippet, output JSON with CSS selectors (relative to that snippet) "
-        "for title, price, image, link. Use comma-separated selectors if needed; set null when missing. "
-        '{{"candidates":[{{"title": "...", "price": "...", "image": "...", "link": "..."}}]}} '
-        "HTML SNIPPET: {card_html}"
-    )
+    prompt = PromptTemplate.from_template(CARD_PROMPT)
     return prompt | get_llm() | parser
 
 
@@ -199,14 +233,37 @@ def extract_cards_with_mapping(
 
     return cards
 
-
 def extract_cards_from_html(
     html: str,
     *,
     base_url: str | None = None,
     top_k: int = TOP_K,
     limit: int = MAX_NODES,
+    cached_selector: str | None = None,
+    cached_mapping: dict | None = None,
+    reuse_cached: bool = True,
 ) -> CardExtractionResult:
+    if reuse_cached and cached_selector:
+        mapping_obj: CardMapping | None = None
+        if cached_mapping:
+            try:
+                mapping_obj = CardMapping(**cached_mapping)
+            except Exception:
+                mapping_obj = None
+        if mapping_obj:
+            cards = extract_cards_with_mapping(
+                html,
+                cached_selector,
+                mapping_obj,
+                base_url=base_url,
+                limit=limit,
+            )
+            return CardExtractionResult(
+                cards=cards,
+                selector=cached_selector,
+                mapping=mapping_obj,
+            )
+
     candidates = discover_card_selectors(html, top_k=top_k)
     if not candidates:
         return CardExtractionResult(cards=[], selector=None, mapping=None)

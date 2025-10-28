@@ -79,5 +79,9 @@ Output STRICT JSON with:
 """
 
 CARD_PROMPT = """
-
+    "You are an expert HTML analyzer for e-commerce product cards. "
+    "Given a product-card snippet, output JSON with CSS selectors (relative to that snippet) "
+    "for title, price, image, link. Use comma-separated selectors if needed; set null when missing. "
+    '{{"candidates":[{{"title": "...", "price": "...", "image": "...", "link": "..."}}]}} '
+    "HTML SNIPPET: {card_html}"
 """
