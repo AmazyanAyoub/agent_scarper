@@ -67,7 +67,6 @@ def detect_search_selectors(html: str, limit: int = 10) -> List[str]:
     logger.info("Search selector candidates: %s", result)
     return result
 
-
 def _detect_search_selectors_heuristic(html: str, limit: int) -> List[SelectorCandidate]:
     soup = BeautifulSoup(html, "html.parser")
     results: List[SelectorCandidate] = []
@@ -93,7 +92,6 @@ def _detect_search_selectors_heuristic(html: str, limit: int) -> List[SelectorCa
             break
 
     return results
-
 
 def _detect_search_selectors_llm(html: str, limit: int) -> List[SelectorCandidate]:
     snippet = html[:8000]
@@ -121,7 +119,6 @@ def _detect_search_selectors_llm(html: str, limit: int) -> List[SelectorCandidat
             )
         )
     return selectors
-
 
 def build_selector(tag: Tag) -> str:
     tag_id = tag.get("id")

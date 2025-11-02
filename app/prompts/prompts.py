@@ -22,7 +22,7 @@ Categories:
 Here are past examples of known classifications:
 {examples}
 
-Now classify this new site:
+Now classify this new website:
 URL: {url}
 Content snippet: {snippet}
 
@@ -79,9 +79,13 @@ Output STRICT JSON with:
 """
 
 CARD_PROMPT = """
-    "You are an expert HTML analyzer for e-commerce product cards. "
-    "Given a product-card snippet, output JSON with CSS selectors (relative to that snippet) "
-    "for title, price, image, link. Use comma-separated selectors if needed; set null when missing. "
-    '{{"candidates":[{{"title": "...", "price": "...", "image": "...", "link": "..."}}]}} '
-    "HTML SNIPPET: {card_html}"
+You are an expert HTML analyzer for e-commerce product cards.
+Given one HTML snippet of a product card, identify CSS selectors (relative to the snippet)
+for title, price, image, and link. Prefer short selectors and only use comma-separated
+lists when multiple elements are required. If a field is missing, set it to null.
+Respond strictly in JSON with this exact shape:
+{{"candidates": [{{"title": "selector or null", "price": "selector or null", "image": "selector or null", "link": "selector or null"}}]}}
+
+HTML SNIPPET:
+{card_html}
 """

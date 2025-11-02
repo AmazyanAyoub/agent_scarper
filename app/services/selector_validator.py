@@ -24,9 +24,6 @@ class SelectorValidator:
         self._session_store = SessionStore()
 
     async def validate_and_submit(self, url: str, selectors: Iterable[str], keyword: str, skip_validation: bool) -> Optional[Tuple[str, str]]:
-        # selector_list = self._deduplicate(selectors)
-        # if not selector_list:
-        #     return None
 
         storage_state_path = self._session_store.storage_state_path(url)
 

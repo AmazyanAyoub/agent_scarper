@@ -27,12 +27,6 @@ class SessionStore:
     def has(self, url: str) -> bool:
         return self._path(url).exists()
 
-    # def load(self, url: str) -> Optional[Dict[str, Any]]:
-    #     path = self._path(url)
-    #     if not path.exists():
-    #         return None
-    #     return json.loads(path.read_text(encoding="utf-8"))
-
     def save(self, url: str, state: Dict[str, Any]) -> None:
         path = self._path(url)
         path.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -48,9 +42,3 @@ class SessionStore:
         else:
             data = payload
         self.save(url, data)
-
-    # def export(self, url: str, target: Path | str) -> None:
-    #     state = self.load(url)
-    #     if not state:
-    #         raise FileNotFoundError(f"No session stored for {url}")
-    #     Path(target).write_text(json.dumps(state, indent=2), encoding="utf-8")

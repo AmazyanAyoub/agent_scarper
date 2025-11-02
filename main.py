@@ -33,6 +33,6 @@ def run_agent(url: str, instruction: str, log_level: str = "INFO") -> None:
 
 
 if __name__ == "__main__":
-    URL = "https://www.ebay.com"
-    INSTRUCTION = "Find iPhone 15"
+    URL = "https://www.amazon.com"
+    INSTRUCTION = "i want iphone 16 with 128go"
     run_agent(URL, INSTRUCTION, log_level="INFO")

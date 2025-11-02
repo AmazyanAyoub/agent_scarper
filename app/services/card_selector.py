@@ -6,14 +6,18 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
-
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 
 from app.models.cards import Cards
 from app.services.chains.builders import build_card_mapping_chain
 from app.services.chains.models import CardMapping, CardMappingResult
-from app.core.config import PRICE_REGEX, MIN_SIBLINGS, MAX_NODES, TOP_K
+from app.core.config import PRICE_REGEX, MIN_SIBLINGS, MAX_NODES, TOP_K, IMAGE_ATTRS
 
+from langchain_core.exceptions import OutputParserException
+
+from app.core.logger import get_logger
+logger = get_logger(__name__)
 
 @dataclass
 class CardSelectorCandidate:
@@ -41,51 +45,80 @@ def is_price_like(s: str) -> bool:
     has_currency = bool(re.search(r'[€$£¥₺₹]|USD|EUR|GBP|JPY|INR|MAD|DH', s, re.I))
     return (len(digits) >= 3) or has_currency
 
-def _score(el):
-    s = 0
-    text = el.get_text(" ", strip=True) or ""
+def _extract_image_url(el):
+    img = el.find("img")
+    if not img:
+        return None
+    for attr in ("data-src", "data-image-src", "data-original", "data-lazy-src", "srcset", "src"):
+        value = img.get(attr)
+        if not value:
+            continue
+        if attr == "srcset":
+            value = value.split()[0]
+        value = value.strip()
+        if value:
+            return value
+    return None
+
+
+def _score(node: Tag) -> int:
+    score = 0
+    if node.find("img"):
+        score += 3
+    if node.find("a", href=True):
+        score += 2
+    text = node.get_text(" ", strip=True) or ""
+    if PRICE_REGEX.search(text):
+        score += 4
     words = len(text.split())
+    if 3 <= words <= 80:
+        score += 1
+    return score
+# def _score(el):
+#     s = 0
+#     text = el.get_text(" ", strip=True) or ""
+#     words = len(text.split())
 
-    # --- 1. Image quality ---
-    imgs = el.find_all("img")
-    if imgs:
-        s += 2
-        # small boost if non-placeholder
-        src = imgs[0].get("data-src") or imgs[0].get("src") or ""
-        if src and not src.startswith("data:image"): 
-            s += 1
+#     # --- 1. Image quality ---
+#     imgs = el.find_all("img")
+#     if imgs:
+#         s += 2
+#         # small boost if non-placeholder
+#         src = imgs[0].get("data-src") or imgs[0].get("src") or ""
+#         if src and not src.startswith("data:image"): 
+#             s += 1
 
-    # --- 2. Link presence ---
-    if el.find("a", href=True):
-        s += 2
+#     # --- 2. Link presence ---
+#     if el.find("a", href=True):
+#         s += 2
 
-    # --- 3. Price check ---
-    price_found = False
-    for m in PRICE_REGEX.finditer(text):
-        if is_price_like(m.group(0)):
-            s += 3
-            price_found = True
-            break
-    if not price_found:
-        s -= 1  # slight penalty
+#     # --- 3. Price check ---
+#     price_found = False
+#     for m in PRICE_REGEX.finditer(text):
+#         if is_price_like(m.group(0)):
+#             s += 3
+#             price_found = True
+#             break
+#     if not price_found:
+#         s -= 1  # slight penalty
 
-    # --- 4. Title / text quality ---
-    if 3 <= words <= 50:
-        s += 2
-    elif words > 0:
-        s += 1
+#     # --- 4. Title / text quality ---
+#     if 3 <= words <= 50:
+#         s += 2
+#     elif words > 0:
+#         s += 1
 
-    # --- 5. Text-to-image ratio (too little text = ad/banner) ---
-    ratio = words / max(1, len(imgs))
-    if 0.3 <= ratio <= 100:  # reasonable range
-        s += 1
+#     # --- 5. Text-to-image ratio (too little text = ad/banner) ---
+#     ratio = words / max(1, len(imgs))
+#     if 0.3 <= ratio <= 100:  # reasonable range
+#         s += 1
 
-    # --- 6. Penalize repetitive / ad classes ---
-    bad_tokens = ["carousel", "banner", "ad", "promo", "snap", "sponsor", "track"]
-    classes = " ".join(el.get("class") or []).lower()
-    if any(b in classes for b in bad_tokens):
-        s -= 3
-    return s
+#     # --- 6. Penalize repetitive / ad classes ---
+#     bad_tokens = ["carousel", "banner", "ad", "promo", "snap", "sponsor", "track"]
+#     classes = " ".join(el.get("class") or []).lower()
+#     if any(b in classes for b in bad_tokens):
+#         s -= 3
+#     return s
 
 
 def discover_card_selectors(
@@ -134,7 +167,11 @@ def discover_card_selectors(
 
 def infer_field_mapping(card_html: str) -> CardMapping:
     chain = build_card_mapping_chain()
-    result = chain.invoke({"card_html": card_html})
+    try:
+        result = chain.invoke({"card_html": card_html})
+    except OutputParserException as err:
+        logger.error("Card mapping parser failure: %s", err)
+        return _fallback_card_mapping(card_html)
 
     if isinstance(result, CardMappingResult) and result.candidates:
         return result.candidates[0]
@@ -142,7 +179,7 @@ def infer_field_mapping(card_html: str) -> CardMapping:
     try:
         return CardMapping(**(result.get("candidates", [{}])[0]))
     except Exception:
-        return CardMapping()  # fall back to nulls
+        return _fallback_card_mapping(card_html)
 
 
 def _first(node: Tag, selectors: Optional[str]) -> Optional[Tag]:
@@ -153,7 +190,18 @@ def _first(node: Tag, selectors: Optional[str]) -> Optional[Tag]:
         if match:
             return match
     return None
-
+def _fallback_card_mapping(card_html: str) -> CardMapping:
+    soup = BeautifulSoup(card_html, "lxml")
+    title = soup.select_one("h1, h2, h3, a")
+    price = soup.select_one("[class*='price'], span")
+    image = soup.select_one("img")
+    link = soup.select_one("a[href]")
+    return CardMapping(
+        title=title.name if title else None,
+        price="[class*='price'], span" if price else None,
+        image="img" if image else None,
+        link="a[href]" if link else None,
+    )
 
 def extract_cards_with_mapping(
     html: str,
@@ -178,18 +226,28 @@ def extract_cards_with_mapping(
 
         image_url = None
         if image_el:
-            src = image_el.get("data-src") or image_el.get("src")
-            if src and base_url:
-                from urllib.parse import urljoin
-                image_url = urljoin(base_url, src)
-            else:
-                image_url = src
+            image_url = (
+                image_el.get("data-src")
+                or image_el.get("src")
+                or (
+                    image_el.get("srcset", "").split()[0]
+                    if image_el.has_attr("srcset")
+                    else None
+                )
+            )
+            if image_url:
+                image_url = image_url.strip()
+
+        if not image_url:
+            image_url = _extract_image_url(node)
+
+        if image_url and base_url:
+            image_url = urljoin(base_url, image_url)
 
         link_url = None
         if link_el and link_el.has_attr("href"):
             href = link_el["href"]
             if base_url:
-                from urllib.parse import urljoin
                 link_url = urljoin(base_url, href)
             else:
                 link_url = href

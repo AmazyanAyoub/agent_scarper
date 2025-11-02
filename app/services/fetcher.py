@@ -3,8 +3,6 @@
 from playwright.async_api import async_playwright
 
 from app.core.logger import get_logger
-logger = get_logger(__name__)
-
 from playwright_stealth import Stealth
 from pathlib import Path
 import traceback, asyncio
@@ -15,6 +13,8 @@ from app.services.captcha_manager import CaptchaManager, CaptchaDetected, Captch
 from app.services.session_store import SessionStore
 import nodriver as uc
 from app.core.config import BROWSER_ARGS, VIEWPORT, USER_AGENT
+
+logger = get_logger(__name__)
 
 stealth = Stealth()
 captcha_manager = CaptchaManager()
@@ -66,10 +66,6 @@ async def _manual_solve(url: str, wait: int) -> str:
     try:
         browser = await uc.start()
         page = await browser.get(url)
-
-        # manual_wait_seconds = wait
-        # if timeout:
-        #     manual_wait_seconds = max(manual_wait_seconds, int(timeout / 1000))
 
         await wait_until_done_or_timeout(wait)
 
@@ -128,10 +124,6 @@ async def fetch_html(
     timeout: Optional[int] = None,
     attempt: int = 0
 ) -> str:
-    # if attempt >= max_attempts:
-    #     logger.error("Max captcha attempts reached for %s; aborting fetch.", url)
-    #     return ""
-    # attempt_1 = 0
     storage_state_path = session_store.storage_state_path(url)
 
     storage_state = None
@@ -178,27 +170,4 @@ async def fetch_html(
         logger.error("Playwright fetch failed for %s: %r", url, e)
         logger.error(traceback.format_exc())
         return ""
-
-# def fetch_links(html: str, url: str) -> List[Dict]:
-#     """
-#     Extract all links from a page using Playwright (dynamic HTML).
-#     Returns list of dicts: {"url": ..., "text": ...}
-#     """
-
-#     try:
-#         logger.info(f"Fetching URL with playwright: {url}")
-#         soup = BeautifulSoup(html, "html.parser")
-#         links = []
-#         for p in soup.find_all("a", href=True):
-#             link_url = p["href"]
-#             link_text = p.get_text(strip=True)
-#             if link_url.startswith("/"):
-#                 link_url = url.rstrip("/") + link_url
-#             links.append({"url": link_url, "text": link_text})
-
-#         return links
-#     except Exception as e:
-#         logger.error(f"Playwright fetch failed for {url}: {repr(e)}")
-#         logger.error(traceback.format_exc())
-#         return []
 

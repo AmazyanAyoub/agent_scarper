@@ -56,17 +56,17 @@ def build_hybrid_classifier(url: str) -> str:
     examples_str = select_examples(data)
 
     # 4. Prepare classifier chain
-    classifier_chain = build_site_classifier_chain()
+    classifier_chain = build_site_classifier_chain(url, snippet, examples_str)
 
-    # 5. Build prompt
-    prompt = EXPANDED_CLASSIFIER_PROMPT.format(
-        url=url,
-        snippet=snippet,
-        examples=examples_str if examples_str else "No examples yet."
-    )
+    # # 5. Build prompt
+    # prompt = EXPANDED_CLASSIFIER_PROMPT.format(
+    #     url=url,
+    #     snippet=snippet,
+    #     examples=examples_str if examples_str else "No examples yet."
+    # )
 
-    # 6. Run classification
-    result = classifier_chain.invoke(prompt)
+    # # 6. Run classification
+    result = classifier_chain.invoke()
 
     # 7. Save for future
     save_example(url, result, snippet[:500])

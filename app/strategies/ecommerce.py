@@ -9,8 +9,6 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from app.core.logger import get_logger
-logger = get_logger(__name__)
-
 
 from app.models.cards import Cards
 from app.services.fetcher import fetch_html
@@ -23,6 +21,8 @@ from app.services.session_store import SessionStore
 # from app.services.card_enricher import card_enricher
 from app.services.card_selector import extract_cards_from_html
 from app.services.storage import save_cards
+
+logger = get_logger(__name__)
 
 DEFAULT_TEST_KEYWORD = "test"
 
@@ -47,11 +47,9 @@ class EcommerceStrategy:
         self,
         validator: SelectorValidator | None = None,
         selector_store: SelectorStore | None = None,
-        session_store: SessionStore | None = None,
     ) -> None:
         self.validator = validator or SelectorValidator()
         self.selector_store = selector_store or SelectorStore()
-        self.session_store = session_store or SessionStore()
 
     async def run(self, url: str, instruction: str) -> EcommerceContext:
         ctx = EcommerceContext(url=url, instruction=instruction)

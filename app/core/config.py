@@ -37,8 +37,8 @@ SUSPECT_SELECTORS = (
     "script[src*='cf/challenge']",
 )
 # Project Settings
-DEFAULT_MODEL = "llama-3.1-8b-instant"
-# DEFAULT_MODEL = "llama-3.3-70b-versatile" 
+# DEFAULT_MODEL = "llama-3.1-8b-instant"
+DEFAULT_MODEL = "llama-3.3-70b-versatile" 
 
 DEFAULT_PROVIDER = "groq"
 
@@ -110,6 +110,17 @@ MAX_NODES = 50
 
 
 PRICE_REGEX = re.compile(r"(?:([€$£¥]|USD|EUR|GBP|¥|DH)\s*)?([0-9]+(?:[.,][0-9]{2})?)(?:\s*([€$£¥]|USD|EUR|GBP|¥|DH))?")
+
+IMAGE_ATTRS = (
+    "data-src",
+    "data-image-src",
+    "data-original",
+    "data-lazy-src",
+    "data-srcset",
+    "data-testid",
+    "srcset",
+    "src",
+)
 
 # PRODUCT_CARD_KEYWORDS = (
 #     "price",

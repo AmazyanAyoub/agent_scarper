@@ -17,7 +17,7 @@ from app.services.llm_engine import get_llm
 from app.services.chains.models import WebsiteTypeClassifier
 
 
-def build_site_classifier_chain():
+def build_site_classifier_chain(url, snippet, examples_str):
     llm = get_llm().bind(
         functions=[convert_to_openai_function(WebsiteTypeClassifier)],
         function_call={"name": "WebsiteTypeClassifier"},
@@ -26,13 +26,17 @@ def build_site_classifier_chain():
         pydantic_schema=WebsiteTypeClassifier,
         attr_name="site_type",
     )
-    prompt = PromptTemplate.from_template(EXPANDED_CLASSIFIER_PROMPT.strip())
+    prompt = EXPANDED_CLASSIFIER_PROMPT.format(
+        url=url,
+        snippet=snippet,
+        examples=examples_str if examples_str else "No examples yet."
+    )
     return prompt | llm | parser
 
 def build_card_mapping_chain():
     parser = PydanticOutputParser(pydantic_object=CardMappingResult)
     prompt = PromptTemplate.from_template(CARD_PROMPT.strip())
-    llm = get_llm()
+    llm = get_llm().bind(temperature=0)
     return prompt | llm | parser
 
 
