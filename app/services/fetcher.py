@@ -20,12 +20,24 @@ stealth = Stealth()
 captcha_manager = CaptchaManager()
 session_store = SessionStore()
 
+_playwright = None
+_browser = None
+
+async def _get_playwright():
+    global _playwright
+    if _playwright is None:
+        _playwright = await async_playwright().start()
+    return _playwright
+
 async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
-    browser = await playwright.chromium.launch(
-        headless=True,
-        args=BROWSER_ARGS,
-        channel="chrome",
-    )
+    global _browser
+    if _browser is None:
+        _browser = await playwright.chromium.launch(
+            headless=True,
+            args=BROWSER_ARGS,
+            channel="chrome",
+        )
+    browser = _browser
 
     context_kwargs = {
         "viewport": VIEWPORT,
@@ -126,22 +138,21 @@ async def fetch_html(
 ) -> str:
     storage_state_path = session_store.storage_state_path(url)
 
-    storage_state = None
 
     try:
         logger.info("Fetching html with playwright: %s", url)
 
-        async with async_playwright() as p:
-            browser, context, page = await _create_stealth_context(p, storage_state_path)
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-            await page.wait_for_timeout(wait)
-            html = await page.content()
-            storage_state = await context.storage_state()
-            await browser.close()
+        # async with async_playwright() as p:
+        p = await _get_playwright()
+        browser, context, page = await _create_stealth_context(p, storage_state_path)
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        await page.wait_for_timeout(wait)
+        html = await page.content()
+        storage_state = await context.storage_state()
+        await context.close()
 
         captcha_manager.handle(url, html)
-        if storage_state:
-            session_store.save(url, storage_state)
+        session_store.save(url, storage_state) if storage_state else None
         return html
 
     except CaptchaDetected as captcha_error:

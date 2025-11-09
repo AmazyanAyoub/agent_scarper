@@ -9,32 +9,58 @@ from app.services.chains.builders import build_site_classifier_chain
 from app.prompts.prompts import EXPANDED_CLASSIFIER_PROMPT
 
 
+_examples_cache = None
+_label_cache = None  # url -> label
+
 def load_examples():
+    global _examples_cache, _label_cache
+    if _examples_cache is not None:
+        return _examples_cache
+
     if not os.path.exists(DATA_FILE):
-        return []
+        _examples_cache, _label_cache = [], {}
+        return _examples_cache
+
     with open(DATA_FILE, "r") as f:
-        return json.load(f)
+        _examples_cache = json.load(f)
+    _label_cache = {e["url"]: e["label"] for e in _examples_cache}
+    return _examples_cache
 
 
 def save_example(url: str, label: str, snippet: str):
+    global _label_cache
     data = load_examples()
-    if not any(entry["url"] == url for entry in data):
-        data.append({"url": url, "label": label, "snippet": snippet})
-        with open(DATA_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+
+    if _label_cache and url in _label_cache:
+        return
+
+    entry = {"url": url, "label": label, "snippet": snippet}
+    data.append(entry)
+
+    if _label_cache is not None:
+        _label_cache[url] = label
+
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 
-def select_examples(data, max_per_label=2):
-    """Pick up to N examples per label, return as formatted string"""
+def select_examples(data, max_per_label=2, max_total=30):
+    """Pick up to N examples per label, but also cap global total."""
     grouped = defaultdict(list)
     for entry in data:
-        grouped[entry["label"]].append(entry)
+        bucket = grouped[entry["label"]]
+        if len(bucket) < max_per_label:
+            bucket.append(entry)
 
     lines = []
+    count = 0
     for label, entries in grouped.items():
-        for e in entries[:max_per_label]:
-            snippet_short = e["snippet"][:200].replace("\n", " ")
+        for e in entries:
+            if count >= max_total:
+                break
+            snippet_short = e["snippet"][:160].replace("\n", " ")
             lines.append(f"{e['url']} → {e['label']} | {snippet_short}...")
+            count += 1
     return "\n".join(lines)
 
 
@@ -42,11 +68,11 @@ def build_hybrid_classifier(url: str) -> str:
     """
     Classify a website type using memory few-shot + LLM.
     """
-    # 1. Check if already classified
     data = load_examples()
-    for entry in data:
-        if entry["url"] == url:
-            return entry["label"]
+
+    label = _label_cache.get(url) if _label_cache else None
+    if label is not None:
+        return label
 
     # 2. Fetch HTML
     html = asyncio.run(fetch_html(url))
@@ -57,14 +83,7 @@ def build_hybrid_classifier(url: str) -> str:
 
     # 4. Prepare classifier chain
     classifier_chain = build_site_classifier_chain(url, snippet, examples_str)
-
-    # # 5. Build prompt
-    # prompt = EXPANDED_CLASSIFIER_PROMPT.format(
-    #     url=url,
-    #     snippet=snippet,
-    #     examples=examples_str if examples_str else "No examples yet."
-    # )
-
+    
     # # 6. Run classification
     result = classifier_chain.invoke()
 
