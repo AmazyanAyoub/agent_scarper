@@ -26,6 +26,12 @@ def build_site_classifier_chain(url, snippet, examples_str):
         pydantic_schema=WebsiteTypeClassifier,
         attr_name="site_type",
     )
+
+    # 🔒 soft token control via char limit (~4 chars ≈ 1 token rough)
+    MAX_EXAMPLES_CHARS = 4000
+    if examples_str and len(examples_str) > MAX_EXAMPLES_CHARS:
+        examples_str = examples_str[:MAX_EXAMPLES_CHARS]
+        
     prompt = EXPANDED_CLASSIFIER_PROMPT.format(
         url=url,
         snippet=snippet,

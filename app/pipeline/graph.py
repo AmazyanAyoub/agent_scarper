@@ -13,14 +13,12 @@ logger = get_logger(__name__)
 
 
 def _errors(state: Dict[str, Any]) -> list[str]:
-    if "errors" not in state or not isinstance(state["errors"], list):
-        state["errors"] = []
+    state.setdefault("errors", [])
     return state["errors"]
 
 
 def _metadata(state: Dict[str, Any]) -> Dict[str, Any]:
-    if "metadata" not in state or not isinstance(state["metadata"], dict):
-        state["metadata"] = {}
+    state.setdefault("metadata", {})
     return state["metadata"]
 
 

@@ -57,8 +57,8 @@ class EcommerceStrategy:
         ctx.search_keyword = build_search_keyword(instruction)
         domain = self._domain(url)
 
-        cached_selector = self.selector_store.get(domain)
-        search_selector = cached_selector.get("search") if cached_selector else None
+        cache = self.selector_store.get(domain) or {}
+        search_selector = cache.get("search")
         if search_selector:
             logger.info("Using cached selector '%s' for %s", search_selector, domain)
             result = await self.validator.validate_and_submit(
@@ -114,7 +114,7 @@ class EcommerceStrategy:
             return
 
         cached = self.selector_store.get(domain) or {}
-        cached_card = cached.get("card") or {}
+        cached_card = cached.get("card", {})
         cached_selector = cached_card.get("selector")
         cached_mapping = cached_card.get("mapping")
 
@@ -145,7 +145,10 @@ class EcommerceStrategy:
         else:
             ctx.output_path = None
 
+_strategy: EcommerceStrategy | None = None
 
 async def run_ecommerce_flow(url: str, instruction: str) -> EcommerceContext:
-    strategy = EcommerceStrategy()
-    return await strategy.run(url, instruction)
+    global _strategy
+    if _strategy is None:
+        _strategy = EcommerceStrategy()
+    return await _strategy.run(url, instruction)
