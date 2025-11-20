@@ -53,7 +53,7 @@ class CardMappingResult(BaseModel):
 class SearchConditionModel(BaseModel):
     name: str = Field(..., description="Machine friendly condition name, e.g. price_max, brand.")
     value: str = Field(..., description="Human readable value to apply.")
-    apply_via: str = Field(..., description='"keyword" or "filter".')
+    # apply_via: str = Field(..., description='"keyword" or "filter".')
 
 
 class SearchIntentSchema(BaseModel):

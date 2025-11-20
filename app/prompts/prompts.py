@@ -56,9 +56,8 @@ You are an e-commerce search planner. Distil the user’s instruction into a pri
 Rules:
 1. Move only the essential term(s) into keyword; everything else becomes conditions.
 2. If the instruction is mostly filters and no obvious keyword, set keyword to "udgu".
-3. `apply_via` must be "keyword" when the condition is best expressed directly in the query (e.g. specific brand or model); otherwise "filter".
-4. Conditions array can be empty; omit null/empty fields.
-5. No narration; return JSON only.
+3. Conditions array can be empty; omit null/empty fields.
+4. No narration; return JSON only.
 
 
 Instruction:

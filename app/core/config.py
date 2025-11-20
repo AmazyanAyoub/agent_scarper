@@ -37,8 +37,8 @@ SUSPECT_SELECTORS = (
     "script[src*='cf/challenge']",
 )
 # Project Settings
-# DEFAULT_MODEL = "llama-3.1-8b-instant"
-DEFAULT_MODEL = "llama-3.3-70b-versatile" 
+DEFAULT_MODEL = "llama-3.1-8b-instant"
+# DEFAULT_MODEL = "llama-3.3-70b-versatile" 
 
 DEFAULT_PROVIDER = "groq"
 
