@@ -29,7 +29,7 @@ async def _get_playwright():
         _playwright = await async_playwright().start()
     return _playwright
 
-async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None):
+async def _create_stealth_context(playwright, storage_state_path: Optional[str] = None, block_media: bool = True):
     global _browser
     if _browser is None:
         _browser = await playwright.chromium.launch(
@@ -50,6 +50,19 @@ async def _create_stealth_context(playwright, storage_state_path: Optional[str] 
         context_kwargs["storage_state"] = storage_state_path
 
     context = await browser.new_context(**context_kwargs)
+
+    if block_media:
+        BLOCKED_TYPES = {"image", "media", "font"}  # keep stylesheets allowed for reliability
+        BLOCKED_EXTS = (".png",".jpg",".jpeg",".webp",".gif",".svg",".woff",".woff2",".ttf",".mp4",".webm",".mov",".avi")
+
+        async def _block_heavy(route, request):
+            rt = request.resource_type
+            url_l = request.url.lower()
+            if rt in BLOCKED_TYPES or url_l.endswith(BLOCKED_EXTS):
+                return await route.abort()
+            await route.continue_()
+
+        await context.route("**/*", _block_heavy)
 
     page = await context.new_page()
     await stealth.apply_stealth_async(page)
@@ -134,7 +147,8 @@ async def fetch_html(
     wait: int = 3000,
     *,
     timeout: Optional[int] = None,
-    attempt: int = 0
+    attempt: int = 0,
+    block_media: bool = True
 ) -> str:
     storage_state_path = session_store.storage_state_path(url)
 
@@ -144,7 +158,7 @@ async def fetch_html(
 
         # async with async_playwright() as p:
         p = await _get_playwright()
-        browser, context, page = await _create_stealth_context(p, storage_state_path)
+        browser, context, page = await _create_stealth_context(p, storage_state_path, block_media)
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
         await page.wait_for_timeout(wait)
         html = await page.content()
