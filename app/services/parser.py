@@ -26,6 +26,19 @@ class SelectorCandidate:
     source: str
 
 
+INPUT_TYPE_RE = re.compile(r"search|text", re.I)
+SEARCH_TERMS_RE = SEARCH_TERMS if hasattr(SEARCH_TERMS, "search") else re.compile(SEARCH_TERMS, re.I)
+SNIPPET_LIMIT = 8000
+
+_PROMPT = PromptTemplate.from_template(SEARCH_SELECTORS_PROMPT)
+_STR_PARSER = StrOutputParser()
+_CHAIN = None
+def _get_selector_chain():
+    global _CHAIN
+    if _CHAIN is None:
+        _CHAIN = _PROMPT | get_llm() | _STR_PARSER
+    return _CHAIN
+
 def _attr_tokens(value: object) -> list[str]:
     if value is None:
         return []
@@ -71,14 +84,14 @@ def _detect_search_selectors_heuristic(html: str, limit: int) -> List[SelectorCa
     soup = BeautifulSoup(html, "html.parser")
     results: List[SelectorCandidate] = []
 
-    inputs = soup.find_all("input", attrs={"type": re.compile("search|text", re.I)})
+    inputs = soup.find_all("input", attrs={"type": INPUT_TYPE_RE})
     for tag in inputs:
-        attrs = " ".join(
-            " ".join(_attr_tokens(tag.get(attr)))
-            for attr in SEARCH_ATTRS
-        )
         score = 3
-        if re.search(SEARCH_TERMS, attrs, re.I):
+        if any(
+            SEARCH_TERMS_RE.search(tok)
+            for a in SEARCH_ATTRS
+            for tok in _attr_tokens(tag.get(a))
+        ):
             score += 2
         css = build_selector(tag)
         results.append(
@@ -91,13 +104,13 @@ def _detect_search_selectors_heuristic(html: str, limit: int) -> List[SelectorCa
         if len(results) >= limit:
             break
 
+
     return results
 
 def _detect_search_selectors_llm(html: str, limit: int) -> List[SelectorCandidate]:
-    snippet = html[:8000]
-    prompt = PromptTemplate.from_template(SEARCH_SELECTORS_PROMPT)
-    llm = get_llm()
-    chain = prompt | llm | StrOutputParser()
+    snippet = html[:SNIPPET_LIMIT]
+    chain = _get_selector_chain()
+    payload_raw = chain.invoke({"snippet": snippet})
 
     try:
         payload_raw = chain.invoke({"snippet": snippet})
